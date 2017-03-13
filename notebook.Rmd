@@ -1,0 +1,52 @@
+---
+title: "Data Import and Rudamentary Analysis"
+output: html_notebook
+---
+
+```{r, setup}
+library(tidyverse)
+
+```
+
+Add a new chunk by clicking the *Insert Chunk* button on the toolbar or by pressing *Ctrl+Alt+I*.
+```{r, import}
+subtypes <- read_tsv('subtypes.txt', 
+                     col_names=TRUE,
+                     col_types = list(
+                       cellline = col_character(),
+                       subtype = col_character())
+                     )
+
+scoring <- read_csv('scoring_and_test_set_id_mappings.csv', 
+                    col_names = TRUE,
+                    col_types = list(
+                      cellline = col_character(), 
+                      drug = col_character(),
+                      id = col_integer(),
+                      Usage = col_character()))
+
+sample_submission <- read_csv('rand_sub_cont.csv',
+                              col_names = TRUE,
+                              col_types = list(
+                                id = col_integer(),
+                                value = col_double()))
+
+expression <- read.table('expression.txt', 
+                         header=TRUE, 
+                         sep = "\t", 
+                         row.names=1,
+                         quote = "")
+training_set_results <- read.table('training_set_answers.txt',
+                                   header=TRUE,
+                                   sep = '\t',
+                                   row.names=1,
+                                   quote = "")
+
+expression = rownames_to_column(expression, var='gene')
+training_set_results = rownames_to_column(training_set_results, var='gene')
+
+```
+
+
+
+When you save the notebook, an HTML file containing the code and output will be saved alongside it (click the *Preview* button or press *Ctrl+Shift+K* to preview the HTML file).

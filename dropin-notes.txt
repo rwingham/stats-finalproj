@@ -1,0 +1,7 @@
+Notes from R Drop-In Session
+
+*The method itself must be ensemble.  Ensemble methods to estimate other things don't count for that requirement.
+*Whether the output should be factor or numeric (dummy variable 0-1 either way) depends on the method you're using (some methods will give a probability, if you're using a cts output instead of a class output.  logistic regression and neural nets.  doesn't sound like an issue, sounds like it's just using regression methods for classification, or neural nets)
+*svms: try different kernel functions (3ish, check for performance effects), but don't get sucked down the rabbit hole.
+*also feature selection but it sounds like you got that handled with the pca
+*discussion about if there's a typo on the slides or not. point: 1 is sensitive, 0 is not sensitive.  Slide has a typo saying 1 means it needs more drug than median, when it should say it needs less

@@ -93,4 +93,30 @@ training_data <- bind_cols(subtypes, expressions_pca)
 
 At this point, I am now ready to begin my bagging/bootstrapping.
 
+```{r combining_training_data}
+#rosemary messing around
+training_data_supervised <- left_join(training_data[1:25,],training_set_results,by = "cellline")
+training_data_supervised <- gather(training_data_supervised, "drug", "response", 41:52)
 
+```
+So now we have the predictor factors and a column for drug and response each, for easier feeding into prediction models for supervised learning.  So we can use everything to predict "response"
+
+```{r basic modeling}
+#lm
+linear <- lm(response ~ . - cellline, training_data_supervised)
+summary(linear)
+
+#svm
+library(e1071)
+support <- svm(response ~., training_data_supervised)
+summary(support)
+support.preditself <- predict(support,training_data_supervised)
+table(pred = support.preditself, true = training_data_supervised[1:156,]$response)
+```
+These aren't models I expected to represent the data well, just making sure the data can run.
+
+The linear model isn't even using most of our factors, and is pretty bad.  Forcing it to use the factors made it use about 9 of the eigenvectors.  Not that we expected it to work particularly well.
+
+The SVM is also not working very well.  I chopped off at 158 because the prediction was mysteriously only 158 chars long, so this is probably wrong somewhere.  It'd be better to be predicting the test data instead of predicting itself in any case, so we should recheck this when we have the test data in.
+
+But, they technically work!

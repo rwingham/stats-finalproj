@@ -2,7 +2,7 @@
 
 ## Task
 
-The task is to predict whether a breast cancer cell line will response to treatment with a given drug using the subtype of the tumor and the gene expression data provided.
+The task is to predict whether a breast cancer cell line will respond to treatment with a given drug using the subtype of the tumor and the gene expression data provided.
 
 * There are 25 cell lines and 12 drugs in the training set
 * The response are coded as 0 = cell line doesn't respond to drug, or 1 = cell line does respond to drug

@@ -36,17 +36,61 @@ expression <- read.table('expression.txt',
                          sep = "\t", 
                          row.names=1,
                          quote = "")
+
 training_set_results <- read.table('training_set_answers.txt',
                                    header=TRUE,
                                    sep = '\t',
                                    row.names=1,
                                    quote = "")
 
-expression = rownames_to_column(expression, var='gene')
-training_set_results = rownames_to_column(training_set_results, var='gene')
+expression = as_tibble(rownames_to_column(as.data.frame(t(expression)), var='cellline'))
+training_set_results = as_tibble(rownames_to_column(training_set_results, var='cellline'))
+```
+
+First, I want to make sure the expression set is normalized properly.  To do that, I evaluate the quantiles for each cell line, since I'm not actually interested in what the actual values, I'm interested in how much they vary.
+
+```{r, validation}
+expression_quantiles <- apply(expression[,-1], 1, quantile, probs=c(.25,.5, .75))
+apply(expression_quantiles, 1, var)
+```
+
+From the results, I can see the quantiles are all similar, and am satisified that the expression data does not require any further normalization.
+
+
+```{r, variances}
+par(mfrow=c(1,2))
+variances <- apply(expression[,-1], 2, var)
+histogram.data <- hist(variances, breaks=30, plot=TRUE)
+histogram.data$counts <- log(histogram.data$counts, 10)
+plot(histogram.data, ylim=c(0, 5), ylab=expression("log"[10]*" Frequency"))
 
 ```
 
+Normally, I would make the cut-off significantly higher on variance (than 2), the two major computations to do are a covariance matrix for all vectors/features, and then determining the eigen values.  If we decided to calculate the covariance of all 18632 genes, that would be $18623^2$ variance calculations (where each feature has 39 features to it).  Due to the exponential increase, we want to bring the feature size down somewhat, and having something in the neighborhood of ~1000 is perfectly doable for modern computers. 
 
 
-When you save the notebook, an HTML file containing the code and output will be saved alongside it (click the *Preview* button or press *Ctrl+Shift+K* to preview the HTML file).
+```{r, pca_1}
+features_of_interest <- colnames(expression[,-1])[which(variances > 2)]
+expressions_pruned <- expression[,features_of_interest]
+```
+
+At this point we have `r length(features_of_interest)` features, and given that we have `r dim(expression)[1]` observations, this feature space is still far too large.  So we can perform a PCA by doing some dimension reduction.
+
+
+```{r, pca_2}
+ev <- eigen(cov(expressions_pruned))
+expressions_pca <- as.data.frame(as.matrix(expression_reduced) %*% ev$vectors[,1:length(ev$values[which(ev$values > .1)])])
+
+# or alternatively
+# pca <- prcomp(expressions_pruned, scale=TRUE)
+```
+
+We ended up going down to `r length(ev$values[which(ev$values > .1)])` dimensions, and given our sample size that's far more managable.
+
+```{r, train_data_construction}
+training_data <- bind_cols(subtypes, expressions_pca)
+```
+
+At this point, I am now ready to begin my bagging/bootstrapping.
+
+

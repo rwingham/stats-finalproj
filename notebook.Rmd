@@ -79,7 +79,7 @@ At this point we have `r length(features_of_interest)` features, and given that 
 
 ```{r, pca_2}
 ev <- eigen(cov(expressions_pruned))
-expressions_pca <- as.data.frame(as.matrix(expression_reduced) %*% ev$vectors[,1:length(ev$values[which(ev$values > .1)])])
+expressions_pca <- as.data.frame(as.matrix(expressions_pruned) %*% ev$vectors[,1:length(ev$values[which(ev$values > .1)])])
 
 # or alternatively
 # pca <- prcomp(expressions_pruned, scale=TRUE)

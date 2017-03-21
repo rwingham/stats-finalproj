@@ -5,3 +5,7 @@ Notes from R Drop-In Session
 *svms: try different kernel functions (3ish, check for performance effects), but don't get sucked down the rabbit hole.
 *also feature selection but it sounds like you got that handled with the pca
 *discussion about if there's a typo on the slides or not. point: 1 is sensitive, 0 is not sensitive.  Slide has a typo saying 1 means it needs more drug than median, when it should say it needs less
+*Simulated annealing: try to get out of local minima by "rocking the boat".  Will have a hard time improving a bad starting point.  Genetic algorithms: start with random sets of parameters, evaluate, pick the best and improve (sounds like an EM algorithm).  Good in large parameter space, but not guaranteed to get out of local minima.  Hybrid approach is common: explore in genetic algorithm, then use simulated annealing to make sure best result isn't in a local minimum.  
+*It's OK to look at the literature, but even the bio people think it's really complicated and you probably won't get helpful information out of it
+*Be able to explain in writeup what the method you're using does
+*A lot of people seem to be considering random forests

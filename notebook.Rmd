@@ -5,6 +5,7 @@ output: html_notebook
 
 ```{r, setup}
 library(tidyverse)
+library(e1071) # for SVMs
 
 ```
 
@@ -16,6 +17,13 @@ subtypes <- read_tsv('subtypes.txt',
                        cellline = col_character(),
                        subtype = col_character())
                      )
+
+subtypes <- transform(subtypes, 'normal_like' = as.numeric(subtype == "Normal-like"),
+                                'luminal' = as.numeric(subtype == "Luminal"),
+                                'claudin_low' = as.numeric(subtype == "Claudin-low"),
+                                'basal' = as.numeric(subtype == "Basal"))
+
+subtypes$subtype <- NULL
 
 scoring <- read_csv('scoring_and_test_set_id_mappings.csv', 
                     col_names = TRUE,
@@ -85,19 +93,33 @@ expressions_pca <- as.data.frame(as.matrix(expressions_pruned) %*% ev$vectors[,1
 # pca <- prcomp(expressions_pruned, scale=TRUE)
 ```
 
-We ended up going down to `r length(ev$values[which(ev$values > .1)])` dimensions, and given our sample size that's far more managable.
-
-```{r, train_data_construction}
-training_data <- bind_cols(subtypes, expressions_pca)
-```
-
-At this point, I am now ready to begin my bagging/bootstrapping.
+We ended up going down to `r length(ev$values[which(ev$values > .1)])` dimensions, and given our sample size that's far more managable.  At this point, I am now ready to begin my bagging/bootstrapping.
 
 ```{r combining_training_data}
 #rosemary messing around
-training_data_supervised <- left_join(training_data[1:25,],training_set_results,by = "cellline")
-training_data_supervised <- gather(training_data_supervised, "drug", "response", 41:52)
+# library(broom)
+training_data <- inner_join(training_set_results,
+                            bind_cols(subtypes, expressions_pca),
+                            by = "cellline")
 
+training_data <- gather(training_data, "drug", "response", 2:13)
+
+```
+
+```{r, group_by_lm}
+# training_data_supervised <- group_by(training_data_supervised, drug)
+
+# l_models <- dlply(training_data_supervised, "drug", function(training_data_supervised) lm(response ~ . - cellline, data = training_data_supervised))
+
+# training_data %>%
+#   group_by(drug) %>%
+#   do(models = lm(response ~ . - cellline, data = .))
+
+# training_data = training_data_supervised %>% 
+#                   group_by(drug) %>%
+#                   do(models = lm(response ~ . - cellline, data = .))
+
+training_data %>% group_by(drug) %>% do(models = lm(response ~ . - cellline, data = .))
 ```
 So now we have the predictor factors and a column for drug and response each, for easier feeding into prediction models for supervised learning.  So we can use everything to predict "response"
 
@@ -107,7 +129,9 @@ linear <- lm(response ~ . - cellline, training_data_supervised)
 summary(linear)
 
 #svm
-library(e1071)
+```
+
+```{r, svm}
 support <- svm(response ~., training_data_supervised)
 summary(support)
 support.preditself <- predict(support,training_data_supervised)

@@ -106,36 +106,29 @@ training_data <- gather(training_data, "drug", "response", 2:13)
 
 ```
 
+Now that we have training data in place, we need to develop a different model for every different drug, which we can do using a group-by operation.
+
+
 ```{r, group_by_lm}
-# training_data_supervised <- group_by(training_data_supervised, drug)
 
-# l_models <- dlply(training_data_supervised, "drug", function(training_data_supervised) lm(response ~ . - cellline, data = training_data_supervised))
 
-# training_data %>%
-#   group_by(drug) %>%
-#   do(models = lm(response ~ . - cellline, data = .))
+# models <- training_data %>% group_by(drug) %>% do(model = lm(response ~ . - cellline, data = .))
+# models <- training_data %>% selet(-cellline) %>% group_by(drug) %>% do(model = lm(response ~ ., data = .))
 
-# training_data = training_data_supervised %>% 
-#                   group_by(drug) %>%
-#                   do(models = lm(response ~ . - cellline, data = .))
-
-training_data %>% group_by(drug) %>% do(models = lm(response ~ . - cellline, data = .))
 ```
+
+```{r}
+models <- training_data %>% group_by(drug) %>% do(models = lm(response ~ V1 + V2 + V3 + V4 + V5 + V6 + V7 + V8 + V9 + V10 + V11 + V12 + V13 + V14 + V15 + V16 + V17 + V18 + V19 + V20 + V31 + V32 + V33 + V34 + V35 + V36 + V37 + V38 + normal_like + luminal + claudin_low + basal, data = .))
+```
+
 So now we have the predictor factors and a column for drug and response each, for easier feeding into prediction models for supervised learning.  So we can use everything to predict "response"
 
-```{r basic modeling}
-#lm
-linear <- lm(response ~ . - cellline, training_data_supervised)
-summary(linear)
-
-#svm
-```
 
 ```{r, svm}
-support <- svm(response ~., training_data_supervised)
+support <- svm(response ~., training_data)
 summary(support)
-support.preditself <- predict(support,training_data_supervised)
-table(pred = support.preditself, true = training_data_supervised[1:156,]$response)
+support.preditself <- predict(support,training_data)
+table(pred = support.preditself, true = training_data[1:156,]$response)
 ```
 These aren't models I expected to represent the data well, just making sure the data can run.
 

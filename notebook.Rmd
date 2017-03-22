@@ -180,70 +180,63 @@ predictions <- training_data %>%
 
 
 ```{r dumb_bagging}
-iterations <- 5000
-training_data_slim <- subset(training_data, select=-c(drug, cellline))[1:25,]
-
-predictions <- foreach(m=1:iterations, .combine=cbind) %do% {
-  training_bag_set <- sample_n(training_data_slim, size=nrow(training_data_slim), replace=TRUE)
-  # train_pos <- 1:nrow(training_data_slim) %in% training_positions
-  suppressWarnings(lm_fit <- lm(response ~ ., data=training_bag_set, singular.ok=TRUE))
-  suppressWarnings(predict(lm_fit, newdata=test_data))
-}
-predictions <- rowMeans(predictions)
-print(predictions)
-```
-
-```{r bagging_function}
-bagging <- function(training, testing, drug, iterations=1000)
+bagging <- function(training, test_vector, drug, iterations=1000)
 {
   training_data_slim <- filter(training, drug == drug)
   training_data_slim <- subset(training_data_slim, select=-c(drug))
   predictions <- foreach(m=1:iterations, .combine=cbind)  %do% {
-    training_bag_set <- sample_n(subset(training_data_slim, select=-c(cellline)), size=nrow(training_data_slim), replace=TRUE)
+    training_bag_set <- sample_n(subset(training_data_slim, 
+                                        select=-c(cellline)), 
+                                 size=nrow(training_data_slim), 
+                                 replace=TRUE)
     suppressWarnings(lm_fit <- lm(response ~ ., data=training_bag_set, singular.ok=TRUE))
     suppressWarnings(predict(lm_fit, newdata=test_data))
   }
-  cbind(test_data$cellline, rowMeans(predictions))
+  rowMeans(predictions)
 }
 
 ```
 
+
 ```{r predict_1}
-# outcome <- tibble('cellline' = scoring$cellline, 
-#                    'drug' = scoring$drug, 
-#                    'id' = scoring$id, 
-#                    'value' = NA)
-# for(i in seq_along(bagged$drug)){
-parameters <- bagging(training_data, test_data, unique(training_data$drug)[1])
-# }
+outcome <- tibble('cellline' = scoring$cellline,
+                   'drug' = scoring$drug,
+                   'id' = scoring$id,
+                   'value' = NA)
 
-
+for(drug in unique(training_data$drug)){
+  predictions <- bagging(training_data, test_data, drug)
+  for(j in seq_along(test_data$cellline)){
+    cellline <- test_data$cellline[j]
+    row <- which(outcome$cellline == cellline & outcome$drug == drug)
+    outcome$value[row] <- predictions[j]
+  }
+}
 ```
 
 
 ```{r predict_2}
-
-bagged <- training_data %>%
-            select(-cellline) %>%
-            group_by(drug) %>%
-            nest() %>%
-            mutate(model = map(data, ~ bagging(response ~ ., data = ., nbagg=1000)))
-
-outcome <- tibble('cellline' = scoring$cellline, 
-                   'drug' = scoring$drug, 
-                   'id' = scoring$id, 
-                   'value' = NA)
-
-rows <- character()
-for(i in seq_along(bagged$drug)){
-  for(j in seq_along(test_data$cellline)){
-    drug = bagged$drug[i]
-    cellline = test_data$cellline[j]
-    row <- which(outcome$cellline == cellline & outcome$drug == drug)
-    outcome$value[row] <- predict(bagged$model[[i]], test_data[j,])
-  }
-}
-
-write_csv(outcome[,3:4], 'submission.csv')
+# bagged <- training_data %>%
+#             select(-cellline) %>%
+#             group_by(drug) %>%
+#             nest() %>%
+#             mutate(model = map(data, ~ bagging(response ~ ., data = ., nbagg=1000)))
+# 
+# outcome <- tibble('cellline' = scoring$cellline, 
+#                    'drug' = scoring$drug, 
+#                    'id' = scoring$id, 
+#                    'value' = NA)
+# 
+# rows <- character()
+# for(i in seq_along(bagged$drug)){
+#   for(j in seq_along(test_data$cellline)){
+#     drug = bagged$drug[i]
+#     cellline = test_data$cellline[j]
+#     row <- which(outcome$cellline == cellline & outcome$drug == drug)
+#     outcome$value[row] <- predict(bagged$model[[i]], test_data[j,])
+#   }
+# }
+# 
+# write_csv(outcome[,3:4], 'submission.csv')
 
 ```

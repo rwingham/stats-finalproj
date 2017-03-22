@@ -6,6 +6,7 @@ output: html_notebook
 ```{r, setup}
 library(tidyverse)
 library(e1071) # for SVMs
+library(ipred) # for bagging
 
 ```
 
@@ -33,6 +34,9 @@ scoring <- read_csv('scoring_and_test_set_id_mappings.csv',
                       id = col_integer(),
                       Usage = col_character()))
 
+# discovered naming mismatch
+scoring$drug <- gsub("-", ".", scoring$drug)
+
 sample_submission <- read_csv('rand_sub_cont.csv',
                               col_names = TRUE,
                               col_types = list(
@@ -54,6 +58,14 @@ training_set_results <- read.table('training_set_answers.txt',
 expression = as_tibble(rownames_to_column(as.data.frame(t(expression)), var='cellline'))
 training_set_results = as_tibble(rownames_to_column(training_set_results, var='cellline'))
 ```
+
+```{r, checks}
+remove_rows <- which(training_set_results$cellline == setdiff(training_set_results$cellline, expression$cellline))
+training_set_results <- training_set_results[-remove_rows,]
+
+
+```
+
 
 First, I want to make sure the expression set is normalized properly.  To do that, I evaluate the quantiles for each cell line, since I'm not actually interested in what the actual values, I'm interested in how much they vary.
 
@@ -104,6 +116,10 @@ training_data <- inner_join(training_set_results,
 
 training_data <- gather(training_data, "drug", "response", 2:13)
 
+test_data <- inner_join(tibble('cellline' = setdiff(expression$cellline, 
+                                training_set_results$cellline)),     
+                        bind_cols(subtypes, expressions_pca), 
+                        by = 'cellline')
 ```
 
 Now that we have training data in place, we need to develop a different model for every different drug, which we can do using a group-by operation.
@@ -111,14 +127,11 @@ Now that we have training data in place, we need to develop a different model fo
 
 ```{r, group_by_lm}
 
-
-# models <- training_data %>% group_by(drug) %>% do(model = lm(response ~ . - cellline, data = .))
-# models <- training_data %>% selet(-cellline) %>% group_by(drug) %>% do(model = lm(response ~ ., data = .))
-
-```
-
-```{r}
-models <- training_data %>% group_by(drug) %>% do(models = lm(response ~ V1 + V2 + V3 + V4 + V5 + V6 + V7 + V8 + V9 + V10 + V11 + V12 + V13 + V14 + V15 + V16 + V17 + V18 + V19 + V20 + V31 + V32 + V33 + V34 + V35 + V36 + V37 + V38 + normal_like + luminal + claudin_low + basal, data = .))
+models <- training_data %>% 
+            select(-cellline) %>% 
+            group_by(drug) %>% 
+            nest() %>% 
+            mutate(model = map(data, ~ lm(response ~ ., data = .)))
 ```
 
 So now we have the predictor factors and a column for drug and response each, for easier feeding into prediction models for supervised learning.  So we can use everything to predict "response"
@@ -128,7 +141,7 @@ So now we have the predictor factors and a column for drug and response each, fo
 support <- svm(response ~., training_data)
 summary(support)
 support.preditself <- predict(support,training_data)
-table(pred = support.preditself, true = training_data[1:156,]$response)
+# table(pred = support.preditself, true = training_data[1:156,]$response)
 ```
 These aren't models I expected to represent the data well, just making sure the data can run.
 
@@ -137,3 +150,77 @@ The linear model isn't even using most of our factors, and is pretty bad.  Forci
 The SVM is also not working very well.  I chopped off at 158 because the prediction was mysteriously only 158 chars long, so this is probably wrong somewhere.  It'd be better to be predicting the test data instead of predicting itself in any case, so we should recheck this when we have the test data in.
 
 But, they technically work!
+
+
+
+## Dumb Linear Regression (2nd Submission)
+
+Since we need to make two submissions, the second submission will make use of linear regression, to make linear regression work with our obscenely small sample size, we need to trim down the feature space significantly.  From doing a PCA, we will need to trim down to the point that we will be reintroducing good amount of error
+
+
+```{r dumb_linear_regression}
+expressions_pca <- as.data.frame(as.matrix(expressions_pruned) %*% ev$vectors[,1:length(ev$values[1:24])])
+
+training_data <- inner_join(training_set_results,
+                            bind_cols(subtypes[1], expressions_pca),
+                            by = "cellline")
+training_data <- gather(training_data, "drug", "response", 2:13)
+# test_data <- subset(test_data, select=colnames(training_data[1:25]))
+# test_data <- subset(test_)
+
+models <- training_data %>%
+            select(-cellline) %>%
+            group_by(drug) %>%
+            nest() %>%
+            mutate(model = map(data, ~ lm(response ~ ., data = .)))
+
+```
+
+```{r dumb_bagging}
+bagged <- training_data %>%
+            select(-cellline) %>%
+            group_by(drug) %>%
+            nest() %>%
+            mutate(model = map(data, ~ bagging(response ~ ., data = ., ns = 25)))
+
+
+
+```
+
+### Issues
+
+I'm not getting a full mapping quite...
+
+
+```{r predict}
+ outcome <- tibble('cellline' = scoring$cellline, 
+                   'drug' = scoring$drug, 
+                   'id' = scoring$id, 
+                   'value' = NA)
+
+rows <- character()
+for(i in seq_along(bagged$drug)){
+  for(j in seq_along(test_data$cellline)){
+    
+    drug = bagged$drug[i]
+    cellline = test_data$cellline[j]
+    
+    row <- which(outcome$cellline == cellline & outcome$drug == drug)
+    if(length(row) == 0){
+      match_drug <- which(outcome$drug == drug)
+      if(length(match_drug) == 0){
+        print(paste('drug', drug))
+      }
+      else  print(paste('cellline', test_data$cellline[j]))
+    }
+    rows <- c(rows, row)
+  }
+    # print(paste('id ', row))
+    
+}
+  
+# missing 6, 15, 24, 42, 51, 60, 69, 78, 87, 105, 
+
+
+sort(unique(as.numeric(rows)))
+```

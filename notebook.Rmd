@@ -7,6 +7,7 @@ output: html_notebook
 library(tidyverse)
 library(e1071) # for SVMs
 library(ipred) # for bagging
+library(foreach) # also for bagging
 
 ```
 
@@ -23,8 +24,8 @@ subtypes <- transform(subtypes, 'normal_like' = as.numeric(subtype == "Normal-li
                                 'luminal' = as.numeric(subtype == "Luminal"),
                                 'claudin_low' = as.numeric(subtype == "Claudin-low"),
                                 'basal' = as.numeric(subtype == "Basal"))
-
 subtypes$subtype <- NULL
+
 
 scoring <- read_csv('scoring_and_test_set_id_mappings.csv', 
                     col_names = TRUE,
@@ -33,8 +34,7 @@ scoring <- read_csv('scoring_and_test_set_id_mappings.csv',
                       drug = col_character(),
                       id = col_integer(),
                       Usage = col_character()))
-
-# discovered naming mismatch
+# discovered drug naming mismatch, making them the same this way
 scoring$drug <- gsub("-", ".", scoring$drug)
 
 sample_submission <- read_csv('rand_sub_cont.csv',
@@ -47,7 +47,9 @@ expression <- read.table('expression.txt',
                          header=TRUE, 
                          sep = "\t", 
                          row.names=1,
-                         quote = "")
+                         quote = "",
+                         check.names=FALSE)
+
 
 training_set_results <- read.table('training_set_answers.txt',
                                    header=TRUE,
@@ -55,15 +57,9 @@ training_set_results <- read.table('training_set_answers.txt',
                                    row.names=1,
                                    quote = "")
 
+
 expression = as_tibble(rownames_to_column(as.data.frame(t(expression)), var='cellline'))
 training_set_results = as_tibble(rownames_to_column(training_set_results, var='cellline'))
-```
-
-```{r, checks}
-remove_rows <- which(training_set_results$cellline == setdiff(training_set_results$cellline, expression$cellline))
-training_set_results <- training_set_results[-remove_rows,]
-
-
 ```
 
 
@@ -116,11 +112,17 @@ training_data <- inner_join(training_set_results,
 
 training_data <- gather(training_data, "drug", "response", 2:13)
 
+```
+
+
+```{r}
 test_data <- inner_join(tibble('cellline' = setdiff(expression$cellline, 
                                 training_set_results$cellline)),     
                         bind_cols(subtypes, expressions_pca), 
                         by = 'cellline')
 ```
+
+
 
 Now that we have training data in place, we need to develop a different model for every different drug, which we can do using a group-by operation.
 
@@ -165,35 +167,69 @@ training_data <- inner_join(training_set_results,
                             bind_cols(subtypes[1], expressions_pca),
                             by = "cellline")
 training_data <- gather(training_data, "drug", "response", 2:13)
-# test_data <- subset(test_data, select=colnames(training_data[1:25]))
-# test_data <- subset(test_)
 
-models <- training_data %>%
-            select(-cellline) %>%
-            group_by(drug) %>%
-            nest() %>%
-            mutate(model = map(data, ~ lm(response ~ ., data = .)))
+predictions <- training_data %>%
+              select(-cellline) %>%
+              group_by(drug) %>%
+              nest() %>%
+              mutate(model = map(data, ~ lm(response ~ ., data = .)))
 
 ```
 
+
+
+
 ```{r dumb_bagging}
+iterations <- 5000
+training_data_slim <- subset(training_data, select=-c(drug, cellline))[1:25,]
+
+predictions <- foreach(m=1:iterations, .combine=cbind) %do% {
+  training_bag_set <- sample_n(training_data_slim, size=nrow(training_data_slim), replace=TRUE)
+  # train_pos <- 1:nrow(training_data_slim) %in% training_positions
+  suppressWarnings(lm_fit <- lm(response ~ ., data=training_bag_set, singular.ok=TRUE))
+  suppressWarnings(predict(lm_fit, newdata=test_data))
+}
+predictions <- rowMeans(predictions)
+print(predictions)
+```
+
+```{r bagging_function}
+bagging <- function(training, testing, drug, iterations=1000)
+{
+  training_data_slim <- filter(training, drug == drug)
+  training_data_slim <- subset(training_data_slim, select=-c(drug))
+  predictions <- foreach(m=1:iterations, .combine=cbind)  %do% {
+    training_bag_set <- sample_n(subset(training_data_slim, select=-c(cellline)), size=nrow(training_data_slim), replace=TRUE)
+    suppressWarnings(lm_fit <- lm(response ~ ., data=training_bag_set, singular.ok=TRUE))
+    suppressWarnings(predict(lm_fit, newdata=test_data))
+  }
+  cbind(test_data$cellline, rowMeans(predictions))
+}
+
+```
+
+```{r predict_1}
+# outcome <- tibble('cellline' = scoring$cellline, 
+#                    'drug' = scoring$drug, 
+#                    'id' = scoring$id, 
+#                    'value' = NA)
+# for(i in seq_along(bagged$drug)){
+parameters <- bagging(training_data, test_data, unique(training_data$drug)[1])
+# }
+
+
+```
+
+
+```{r predict_2}
+
 bagged <- training_data %>%
             select(-cellline) %>%
             group_by(drug) %>%
             nest() %>%
-            mutate(model = map(data, ~ bagging(response ~ ., data = ., ns = 25)))
+            mutate(model = map(data, ~ bagging(response ~ ., data = ., nbagg=1000)))
 
-
-
-```
-
-### Issues
-
-I'm not getting a full mapping quite...
-
-
-```{r predict}
- outcome <- tibble('cellline' = scoring$cellline, 
+outcome <- tibble('cellline' = scoring$cellline, 
                    'drug' = scoring$drug, 
                    'id' = scoring$id, 
                    'value' = NA)
@@ -201,26 +237,13 @@ I'm not getting a full mapping quite...
 rows <- character()
 for(i in seq_along(bagged$drug)){
   for(j in seq_along(test_data$cellline)){
-    
     drug = bagged$drug[i]
     cellline = test_data$cellline[j]
-    
     row <- which(outcome$cellline == cellline & outcome$drug == drug)
-    if(length(row) == 0){
-      match_drug <- which(outcome$drug == drug)
-      if(length(match_drug) == 0){
-        print(paste('drug', drug))
-      }
-      else  print(paste('cellline', test_data$cellline[j]))
-    }
-    rows <- c(rows, row)
+    outcome$value[row] <- predict(bagged$model[[i]], test_data[j,])
   }
-    # print(paste('id ', row))
-    
 }
-  
-# missing 6, 15, 24, 42, 51, 60, 69, 78, 87, 105, 
 
+write_csv(outcome[,3:4], 'submission.csv')
 
-sort(unique(as.numeric(rows)))
 ```

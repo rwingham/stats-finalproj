@@ -228,10 +228,10 @@ training_data_class$drug <- as.factor(training_data_class$drug)
 training_data_class$cellline <- as.factor(training_data_class$cellline)
 
 #doesn't work with the test data because of column # diffs :(
-forest <- randomForest(response ~ .,training_data_class, xtest=test_data)
-forest_predictions <- data.frame(forest$predicted)
-forest_predictions <- bind_cols(data.frame(c(1:300)),forest_predictions)
-write_csv(forest_predictions, 'submission_forest.csv')
+#forest <- randomForest(response ~ .,training_data_class, xtest=test_data)
+#forest_predictions <- data.frame(forest$predicted)
+#forest_predictions <- bind_cols(data.frame(c(1:300)),forest_predictions)
+#write_csv(forest_predictions, 'submission_forest.csv')
 ```
 
 
@@ -243,7 +243,7 @@ models <- training_data %>%
             mutate(model = map(data, ~ randomForest(as.factor(response) ~ ., 
                                                     data=., 
                                                     importance=TRUE, 
-                                                    ntree=2000)))
+                                                    ntree=200000)))
 
 
 outcome <- tibble('cellline' = scoring$cellline,

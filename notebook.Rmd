@@ -263,5 +263,5 @@ for(i in seq_along(models$drug)){
 
 write_csv(outcome[,3:4], 'submission_random_forests.csv')
 ```
-
+We keep the factor variables coded as numberic here because random forests favor factor variables with more levels, and including them as factors was actually yielding worse performance.  We assume the factors were overshadowing more useful information from the results of our PCA.
 

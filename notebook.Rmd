@@ -240,3 +240,18 @@ for(drug in unique(training_data$drug)){
 # write_csv(outcome[,3:4], 'submission.csv')
 
 ```
+
+```{r andom_forest}
+library(randomForest)
+#a copy with response as a factor for classification algorithms
+training_data_class <- training_data
+training_data_class$response <- as.factor(training_data_class$response)
+training_data_class$drug <- as.factor(training_data_class$drug)
+training_data_class$cellline <- as.factor(training_data_class$cellline)
+
+#doesn't work with the test data because of column # diffs :(
+forest <- randomForest(response ~ .,training_data_class, xtest=test_data)
+forest_predictions <- data.frame(forest$predicted)
+forest_predictions <- bind_cols(data.frame(c(1:300)),forest_predictions)
+write_csv(forest_predictions, 'submission.csv')
+```

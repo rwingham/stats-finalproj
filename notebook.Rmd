@@ -9,6 +9,7 @@ library(e1071) # for SVMs
 library(ipred) # for bagging
 library(foreach) # also for bagging
 
+
 ```
 
 Add a new chunk by clicking the *Insert Chunk* button on the toolbar or by pressing *Ctrl+Alt+I*.
@@ -180,7 +181,7 @@ predictions <- training_data %>%
 
 
 ```{r dumb_bagging}
-bagging <- function(training, test_vector, drug, iterations=1000)
+bagging <- function(training, test_vector, drug, iterations=500)
 {
   training_data_slim <- filter(training, drug == drug)
   training_data_slim <- subset(training_data_slim, select=-c(drug))
@@ -189,8 +190,8 @@ bagging <- function(training, test_vector, drug, iterations=1000)
                                         select=-c(cellline)), 
                                  size=nrow(training_data_slim), 
                                  replace=TRUE)
-    suppressWarnings(lm_fit <- lm(response ~ ., data=training_bag_set, singular.ok=TRUE))
-    suppressWarnings(predict(lm_fit, newdata=test_data))
+    suppressWarnings(fit <- lm(response ~ ., data=training_bag_set))
+    suppressWarnings(predict(fit, newdata=test_data))
   }
   rowMeans(predictions)
 }
@@ -209,9 +210,11 @@ for(drug in unique(training_data$drug)){
   for(j in seq_along(test_data$cellline)){
     cellline <- test_data$cellline[j]
     row <- which(outcome$cellline == cellline & outcome$drug == drug)
-    outcome$value[row] <- predictions[j]
+    outcome$value[row] <- ifelse(predictions[j] < 0.5, 0, 1)
   }
 }
+
+write_csv(outcome[,3:4], 'submission_linear_regression.csv')
 ```
 
 

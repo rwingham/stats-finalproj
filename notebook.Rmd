@@ -8,7 +8,7 @@ library(tidyverse)
 library(e1071) # for SVMs
 library(ipred) # for bagging
 library(foreach) # also for bagging
-
+library(randomForest)
 
 ```
 
@@ -94,6 +94,8 @@ expressions_pruned <- expression[,features_of_interest]
 At this point we have `r length(features_of_interest)` features, and given that we have `r dim(expression)[1]` observations, this feature space is still far too large.  So we can perform a PCA by doing some dimension reduction.
 
 
+# Note - Add Plot of Eigen Values (errors)
+
 ```{r, pca_2}
 ev <- eigen(cov(expressions_pruned))
 expressions_pca <- as.data.frame(as.matrix(expressions_pruned) %*% ev$vectors[,1:length(ev$values[which(ev$values > .1)])])
@@ -129,21 +131,20 @@ Now that we have training data in place, we need to develop a different model fo
 
 
 ```{r, group_by_lm}
-
-models <- training_data %>% 
-            select(-cellline) %>% 
-            group_by(drug) %>% 
-            nest() %>% 
-            mutate(model = map(data, ~ lm(response ~ ., data = .)))
+# models <- training_data %>% 
+#             select(-cellline) %>% 
+#             group_by(drug) %>% 
+#             nest() %>% 
+#             mutate(model = map(data, ~ lm(response ~ ., data = .)))
 ```
 
 So now we have the predictor factors and a column for drug and response each, for easier feeding into prediction models for supervised learning.  So we can use everything to predict "response"
 
 
 ```{r, svm}
-support <- svm(response ~., training_data)
-summary(support)
-support.preditself <- predict(support,training_data)
+# support <- svm(response ~., training_data)
+# summary(support)
+# support.preditself <- predict(support,training_data)
 # table(pred = support.preditself, true = training_data[1:156,]$response)
 ```
 These aren't models I expected to represent the data well, just making sure the data can run.
@@ -162,18 +163,18 @@ Since we need to make two submissions, the second submission will make use of li
 
 
 ```{r dumb_linear_regression}
-expressions_pca <- as.data.frame(as.matrix(expressions_pruned) %*% ev$vectors[,1:length(ev$values[1:24])])
-
-training_data <- inner_join(training_set_results,
-                            bind_cols(subtypes[1], expressions_pca),
-                            by = "cellline")
-training_data <- gather(training_data, "drug", "response", 2:13)
-
-predictions <- training_data %>%
-              select(-cellline) %>%
-              group_by(drug) %>%
-              nest() %>%
-              mutate(model = map(data, ~ lm(response ~ ., data = .)))
+# expressions_pca <- as.data.frame(as.matrix(expressions_pruned) %*% ev$vectors[,1:length(ev$values[1:24])])
+# 
+# training_data <- inner_join(training_set_results,
+#                             bind_cols(subtypes[1], expressions_pca),
+#                             by = "cellline")
+# training_data <- gather(training_data, "drug", "response", 2:13)
+# 
+# predictions <- training_data %>%
+#               select(-cellline) %>%
+#               group_by(drug) %>%
+#               nest() %>%
+#               mutate(model = map(data, ~ lm(response ~ ., data = .)))
 
 ```
 
@@ -218,34 +219,8 @@ write_csv(outcome[,3:4], 'submission_linear_regression.csv')
 ```
 
 
-```{r predict_2}
-# bagged <- training_data %>%
-#             select(-cellline) %>%
-#             group_by(drug) %>%
-#             nest() %>%
-#             mutate(model = map(data, ~ bagging(response ~ ., data = ., nbagg=1000)))
-# 
-# outcome <- tibble('cellline' = scoring$cellline, 
-#                    'drug' = scoring$drug, 
-#                    'id' = scoring$id, 
-#                    'value' = NA)
-# 
-# rows <- character()
-# for(i in seq_along(bagged$drug)){
-#   for(j in seq_along(test_data$cellline)){
-#     drug = bagged$drug[i]
-#     cellline = test_data$cellline[j]
-#     row <- which(outcome$cellline == cellline & outcome$drug == drug)
-#     outcome$value[row] <- predict(bagged$model[[i]], test_data[j,])
-#   }
-# }
-# 
-# write_csv(outcome[,3:4], 'submission.csv')
+```{r random_forest}
 
-```
-
-```{r andom_forest}
-library(randomForest)
 #a copy with response as a factor for classification algorithms
 training_data_class <- training_data
 training_data_class$response <- as.factor(training_data_class$response)
@@ -256,5 +231,37 @@ training_data_class$cellline <- as.factor(training_data_class$cellline)
 forest <- randomForest(response ~ .,training_data_class, xtest=test_data)
 forest_predictions <- data.frame(forest$predicted)
 forest_predictions <- bind_cols(data.frame(c(1:300)),forest_predictions)
-write_csv(forest_predictions, 'submission.csv')
+write_csv(forest_predictions, 'submission_forest.csv')
 ```
+
+
+```{r random_forest_2}
+models <- training_data %>%
+            select(-cellline) %>%
+            group_by(drug) %>%
+            nest() %>%
+            mutate(model = map(data, ~ randomForest(as.factor(response) ~ ., 
+                                                    data=., 
+                                                    importance=TRUE, 
+                                                    ntree=2000)))
+
+
+outcome <- tibble('cellline' = scoring$cellline,
+                   'drug' = scoring$drug,
+                   'id' = scoring$id,
+                   'value' = NA)
+
+for(i in seq_along(models$drug)){
+  drug <- models$drug[i]
+  predictions <- as.vector(predict(models$model[[i]], test_data[,-1]))
+  for(j in seq_along(test_data$cellline)){
+    cellline <- test_data$cellline[j]
+    row <- which(outcome$cellline == cellline & outcome$drug == drug)
+    outcome$value[row] <- predictions[j]
+  }
+}
+
+write_csv(outcome[,3:4], 'submission_random_forests.csv')
+```
+
+

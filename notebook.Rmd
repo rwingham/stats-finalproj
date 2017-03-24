@@ -59,7 +59,7 @@ training_set_results = as_tibble(rownames_to_column(training_set_results, var='c
 
 # EDA
 
-First, we look for missing values, as their precense will make a large impact on how we proceed
+First, we look for missing values, as their presence will make a large impact on how we proceed.  If we had missing values, we might need to exclude the associated data points.  
 
 ```{r missing}
 anyNA(expression)
@@ -68,7 +68,7 @@ anyNA(subtypes)
 anyNA(scoring)
 ```
 
-Now that we can see that we have no missing data, we can now evaluate types.  
+Now that we can see that we have no missing data, we can evaluate types.  
 
 ```{r typeof_subtypes}
 sapply(subtypes, class)
@@ -84,7 +84,7 @@ table(sapply(training_set_results, class))
 class(training_set_results$cellline)
 ```
 
-Now, we are happy that we have no missing data we have to address, and all of the data we imported is stored in the correct type for the purposes of analysis in `R`, we now go on to check for normalization in the gene expression data.  To do that, I evaluate the quantiles for each cell line, since I'm not actually interested in what the actual values, I'm interested in how much they vary.
+Now  all of the data we imported is stored in the correct type for the purposes of analysis in `R`, so we can  go on to check for normalization in the gene expression data.  To do that, we evaluate the quantiles for each cell line, since we're not actually interested in what the actual values but in how much they vary.
 
 ```{r, normalization_verify_1}
 expression_quantiles <- apply(expression[,-1], 1, quantile, probs=c(.25,.5, .75))
@@ -120,7 +120,7 @@ plot(histogram.data, ylim=c(0, 5), ylab=expression("log"[10]*" Frequency"))
 
 ```
 
-While we can see that there is a change in how the histogram showing what the variance is like when we approach variance values of 5, we will cloose a much lower threshold due to the remainder of our analysis plan, with which the first step involves determining the eigen values and eigen vectors from the co-variance matrix for the purposes of doing a PCA.  Numerical solvers are fairly good, however calculating the covariance between every gene involves making $n^2$ co-variance calculations.  Since we're starting with `r length(expression)` genes, that would result in  `r length(expression)`$^2$ variance calculations (where each feature has 39 features to it), so we need to slim it down somewhat.
+While we can see that there is a change in the histogram showing the variance as we approach variance values of 5, we will cloose a much lower threshold due to the remainder of our analysis plan.  The first step of our plan involves determining the eigen values and eigen vectors from the co-variance matrix in order to do a PCA.  Numerical solvers are fairly good, however, calculating the covariance between every gene involves making $n^2$ co-variance calculations.  Since we're starting with `r length(expression)` genes, that would result in  `r length(expression)`$^2$ variance calculations (where each feature has 39 features to it), so we need to slim it down somewhat.
 
 
 ```{r, minor_reduction}
@@ -130,7 +130,7 @@ training_expressions_pruned <- training_expressions[,features_of_interest]
 test_expressions_pruned <- test_expressions[,features_of_interest]
 ```
 
-At this point we have `r length(features_of_interest)` features, and given that we have `r ncol(expression)` observations, this feature space is still far too large to do analysis on its own, which is why we now perform a PCA where we look at doing dimension reduction.  When performing a PCA, we take the eigen values the covariance matrix.  Each eigen value corresponds to the error that would be introduced should we exclude the corresponding eigen vector and lessen the dimension by 1. 
+At this point we have `r length(features_of_interest)` features, and given that we have `r ncol(expression)` observations, this feature space is still far too large to do analysis on its own, so we now perform a PCA where we look at doing dimension reduction.  When performing a PCA, we take the eigen values of the covariance matrix.  Each eigen value corresponds to the error that would be introduced should we exclude the corresponding eigen vector and lessen the dimension by 1. 
 
 
 ```{r, pca_calc}
@@ -150,7 +150,7 @@ plot(log10(sqrt(pca$sdev)),
      xlab="Eigen Value Index",
      ylab=expression("log"[10]*" Sqrt Error"))
 ```
-Again, the first plot does not tell us much, other than the error quickly goes to near 0, suggesting that we can likely do some major feature reduction; however the log-scale plot also shows that there is a rapid transition from a high degree of error, (on the order of $10^0$) to a very small error ($10^{-15}$).  
+Again, the first plot does not tell us much, other than the error quickly goes to near 0, suggesting that we can likely do some major feature reduction; however the log-scale plot also shows that there is a rapid transition from a high degree of error, (on the order of $10^0$), to a very small error ($10^{-15}$).  
 
 ```{r pca_selection}
 expressions_pca <- pca$x
@@ -158,7 +158,7 @@ test_expressions_pca <- cbind(select(test_expressions, cellline), predict(pca, t
 ```
 
 
-We ended up going down to `r ncol(expressions_pca)` dimensions, and given our sample size that's far more managable.  At this point, I am now ready to begin my bagging/bootstrapping.
+We ended up going down to `r ncol(expressions_pca)` dimensions, and given our sample size, that's far more managable.  At this point, I am now ready to begin my bagging/bootstrapping.
 
 ```{r creating_test_and_train_data}
 training_data <- inner_join(training_set_results,
@@ -182,9 +182,9 @@ Now that we have the test and training data in place, as well as our feature red
 
 # Linear Regression
 
-Since we need to make two submissions, the first submission will make use of linear regression, to make linear regression work with our obscenely small sample size, we need to trim down the feature space significantly. Even though we got down to `r ncol(expressions_pca)` features, since we only have `r nrow(training_data)` samples, we won't be able to make use of all those features.  As a result, I fully expect the linear regression model to behave poorly, but we are treating this submission as an exercise in developing the method from first principles.
+Since we need to make two submissions, the first submission will make use of linear regression.  To make linear regression work with our obscenely small sample size, we need to trim down the feature space significantly. Even though we got down to `r ncol(expressions_pca)` features, since we only have `r nrow(training_data)` samples, we won't be able to make use of all those features.  As a result, I fully expect the linear regression model to behave poorly, but we are treating this submission as an exercise in developing the method from first principles.
 
-First we create our bagging function, which given n observations, it will make n samples with replacements as many times as we want (specified a default of 500 times), calculate the prediction parameters and then average them out.
+First we create our bagging function, which given n observations will make n samples with replacement as many times as we want (defaulting to 500 times), calculate the prediction parameters, and then average them out.
 
 ```{r, linear_regression_and_bagging}
 bagging <- function(training, test_vector, drug, iterations=500)
@@ -220,11 +220,13 @@ for(drug in unique(training_data$drug)){
 write_csv(outcome[,3:4], 'submission_linear_regression.csv')
 ```
 
-Amazingly enough, the linear regression model didn't do poorly.  At the time of submission, it was not the worst submssion made (but second worst), and resulted in a score of 0.51.  Some notes, due to the extreme amount of error I was introducing by eliminating parameters from the eigen vectors due to my small sample size, we decided to exclude the use of the subtype variable.  It is also possible that accuracy will improve if I was to inrease the iterations, but at 500 iterations of 25 choose 25 with replacement, it's most likely we are converging.
+We make individual models per drug, then run the appropriate model for each drug in the test set.  
+
+Amazingly enough, the linear regression model didn't do poorly.  At the time of submission, it was not the worst submssion made (though it was the second worst), with a score of 0.51.  Some notes: due to the extreme amount of error we were introducing by eliminating parameters from the eigen vectors due to our small sample size, we decided to exclude the use of the subtype variable.  It is also possible that accuracy will improve if we were to increase the iterations, but at 500 iterations of 25 choose 25 with replacement, it's most likely we are converging.
 
 # Random Forests
 
-The next model type we elected to use was random forests.  Random forests lends itself really nicely to us, as it has no problem handling highly dimension data with very small sample sizes.  Even though through the PCA, we reduced the expression set data down to 38 dimensions, that's still more than the number of training samples we have to work with.  
+The next model type we used was random forests.  Random forests lends itself really nicely to this data set, as it has no problem handling high-dimensional with very small sample sizes.  Even though we reduced the expression set data down to 38 dimensions through the PCA, that's still more than the number of training samples we have to work with.  
 
 ```{r random_forest}
 models <- training_data %>%
@@ -254,6 +256,11 @@ for(i in seq_along(models$drug)){
 
 write_csv(outcome[,3:4], 'submission_random_forests.csv')
 ```
+
+ We used a similar modeling structure here as with linear regression, making a separate forest for each drug.  
+
+
+We settled on the number of trees by trying several different values; tree counts well below `r ntree` give worse results, while tree counts above it take longer to compute for no gain in performance.  Most of the other defaults for random forest were in line with best practices, such as defaults for node size and number of candidates per split.  We tested a version where the factor variables were identified as such in the R code, but found it actually yielded worse performance, perhaps due to random forests' tendency to over-weight factor variables with more factors. We also tested conditional random forests but excluded them from the final analysis for performing significantly worse.  
 
 The random forests model generates significantly better results than the linear regression model, giving us a score of 0.64.  Given the simplicity of the algorithm, for a safe and fast analysis, random forests seem to be an excellent way to go.
 

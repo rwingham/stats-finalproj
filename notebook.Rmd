@@ -1,19 +1,30 @@
 ---
-title: "Statistical Challenge Writeup"
+title: "Drug Reaction Prediction Based on Genomic Data"
+subtitle: 'BMI 551'
+author:
+- Rosemary Ingham
+- Ognyan Moore
+date: "`r format(Sys.time(), '%d %B %Y')`"
 output:
   pdf_document: default
   html_notebook: default
 ---
 
 
-# Data Import
+# Setup
 
-```{r, setup, echo=FALSE, message=FALSE}
+First thing we do is import the necessary libraries.  We make use of `tidyverse` to manipulate the shape of the data, use the `foreach` library to make writing code for the bagging portion of our analysis a bit simpler, and we use the `randomForest` library to do our random forest model.
+
+```{r, setup, echo=TRUE, message=FALSE}
 library(tidyverse)
-library(foreach) # for bagging
+library(foreach)
 library(randomForest)
 ```
 
+
+# Data Import
+
+Importing the data was fairly straight forward, there were good descriptors provided.
 
 ```{r, import}
 subtypes <- read_tsv('subtypes.txt', 
@@ -61,6 +72,7 @@ expression = as_tibble(rownames_to_column(as.data.frame(t(expression)), var='cel
 training_set_results = as_tibble(rownames_to_column(training_set_results, var='cellline'))
 ```
 
+The only oddity is that some of the provided files expected the user to make reference of row names, which tidyverse does not make use of.  We worked around this by importing those files using `read.table` and then using the tibble command `rownames_to_column`.  
 
 # EDA
 
@@ -73,7 +85,7 @@ anyNA(subtypes)
 anyNA(scoring)
 ```
 
-Now that we can see that we have no missing data, we can evaluate types.  
+Now that we can see that we have no missing data, we can evaluate data types.  
 
 ```{r typeof_subtypes}
 sapply(subtypes, class)
@@ -148,13 +160,14 @@ pca <- prcomp(training_expressions_pruned)
 To determine how much of a dimension reduction we can do without introducing too much error, we plot the error, which is the square root of the eigen values.
 
 ```{r, pca_error_plot}
-plot(sqrt(pca$sdev), type="l", xlab="Eigen Value Index", ylab="Sqrt Error")
+plot(sqrt(pca$sdev), type="o", xlab="Eigen Value Index", ylab="Sqrt Error")
 ```
 The first plot shows what we would expect, the eigen-values which are the squre of the error are decreasing, but we effectively need at least 24 of the eigen-vectors to accurately account for the variance in our 25 samples.  This result is not unexpected given our very small sample size ($n = $`r nrow(training_expressions)`).  To me, this indicates that ideally, for a PCA, we would have more samples to better account for all the variance.  So we decide we will make use of all 25 of our eigen-vectors
 
 ```{r pca_selection}
 expressions_pca <- pca$x
-test_expressions_pca <- cbind(select(test_expressions, cellline), predict(pca, test_expressions_pruned))
+test_expressions_pca <- cbind(select(test_expressions, cellline), 
+                              predict(pca, test_expressions_pruned))
 ```
 
 We ended up going down to `r ncol(expressions_pca)` dimensions, and given our sample size, that's far more managable. The next step is to great our training and test data structures that we can test over.  In order to minimize repeating ourselves in our code, we use some tivyverse joining functions, and restructure the data using the gather function.
@@ -261,7 +274,7 @@ write_csv(outcome[,3:4], 'submission_random_forests.csv')
 
  We used a similar modeling structure here as with linear regression, making a separate forest for each drug.  
 
-We settled on the number of trees by trying several different values; tree counts well below `r print(ntrees)` give worse results, while tree counts above it take longer to compute for no gain in performance.  Most of the other defaults for random forest were in line with best practices, such as defaults for node size and number of candidates per split.  We tested a version where the factor variables were identified as such in the R code, but found it actually yielded worse performance, perhaps due to random forests' tendency to over-weight factor variables with more factors. We also tested conditional random forests but excluded them from the final analysis for performing significantly worse.  
+We settled on the number of trees by trying several different values; tree counts well below `r ntrees` give worse results, while tree counts above it take longer to compute for no gain in performance.  Most of the other defaults for random forest were in line with best practices, such as defaults for node size and number of candidates per split.  We tested a version where the factor variables were identified as such in the R code, but found it actually yielded worse performance, perhaps due to random forests' tendency to over-weight factor variables with more factors. We also tested conditional random forests but excluded them from the final analysis for performing significantly worse.  
 
 The random forests model generates significantly better results than the linear regression model, giving us a score of 0.64.  Given the simplicity of the algorithm, for a safe and fast analysis, random forests seem to be an excellent way to go.
 

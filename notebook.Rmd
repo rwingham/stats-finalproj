@@ -24,7 +24,7 @@ library(randomForest)
 
 # Data Import
 
-Importing the data was fairly straight forward, there were good descriptors provided.
+Importing the data was fairly straightforward, there were good descriptors provided.
 
 ```{r, import}
 subtypes <- read_tsv('subtypes.txt', 
@@ -72,7 +72,7 @@ expression = as_tibble(rownames_to_column(as.data.frame(t(expression)), var='cel
 training_set_results = as_tibble(rownames_to_column(training_set_results, var='cellline'))
 ```
 
-The only oddity is that some of the provided files expected the user to make reference of row names, which tidyverse does not make use of.  We worked around this by importing those files using `read.table` and then using the tibble command `rownames_to_column`.  
+The only oddity is that some of the provided files expected the user to use row names, which tidyverse does not use.  We worked around this by importing those files using `read.table` and then using the tibble command `rownames_to_column`.  
 
 # EDA
 
@@ -101,7 +101,7 @@ table(sapply(training_set_results, class))
 class(training_set_results$cellline)
 ```
 
-Now  all of the data we imported is stored in the correct type for the purposes of analysis in `R`, so we can  go on to check for normalization in the gene expression data.  To do that, we evaluate the quantiles for each cell line, since we're not actually interested in what the actual values but in how much they vary.
+Now all of the data we imported is stored in the correct type for analysis in `R`, so we can go on to check for normalization in the gene expression data.  To do that, we evaluate the quantiles for each cell line, since we're not interested in what the actual values are but in how much they vary.
 
 ```{r, normalization_verify_1}
 expression_quantiles <- apply(expression[,-1], 1, quantile, probs=c(.25,.5, .75))
@@ -117,12 +117,12 @@ boxplot(t(subset(expression, select=-c(cellline))),
 title("Comparing Gene Expression Values")
 ```
 
-From the results, I can see the quantiles are all similar, and am satisified that the expression data does not require any further normalization.
+From the results, we can see the quantiles are all similar, and are satisified that the expression data does not require any further normalization.
 
 
 # Classification
 
-The next step in our analysis is to slim down our feature space.  We are working with `r length(expression)` genes, which is not really feasible to try and make work.  The first thing we do is remove the genes from the analysis that have low variance, or in other words, genes that seem to not change regardless of which sample.  To determine the cutoff, we analyze what the gene variance looks like.
+The next step in our analysis is to slim down our feature space.  We are working with `r length(expression)` genes, which is not really feasible to try and make work.  The first thing we do is remove from the analysis the genes that have low variance, in other words, genes that seem to not change across different samples.  To determine the cutoff, we analyze what the gene variance looks like.
 
 Since we expect an exponential decay of variances, we look at the log-scale of the variances to see if there is an obvious cut-off.
 
@@ -140,7 +140,7 @@ plot(histogram.data, ylim=c(0, 5), ylab=expression("log"[10]*" Frequency"))
 
 ```
 
-While we can see that there is a change in the histogram showing the variance as we approach variance values of 5, we will cloose a much lower threshold due to our method of dimension reduction.  The first step is determining the eigen values and eigen vectors from the co-variance matrix.  Numerical solvers are fairly good, however, calculating the covariance between every gene involves making $n^2$ co-variance calculations.  Since we're starting with `r length(expression)` genes, that would result in  `r length(expression)`$^2$ variance calculations (where each feature has 25 values from the training data), so we need to slim it down somewhat.
+While we can see that there is a change in the histogram showing the variance as we approach variance values of 5, we will choose a much lower threshold due to our method of dimensionality reduction.  The first step is determining the eigen-values and eigen-vectors from the co-variance matrix.  Numerical solvers are fairly good, however, calculating the covariance between every gene involves making $n^2$ co-variance calculations.  Since we're starting with `r length(expression)` genes, that would result in  `r length(expression)`$^2$ variance calculations (where each feature has 25 values from the training data), so we need to slim it down somewhat.
 
 ```{r, minor_reduction}
 cutoff = 2
@@ -150,19 +150,19 @@ training_expressions_pruned <- training_expressions[,features_of_interest]
 test_expressions_pruned <- test_expressions[,features_of_interest]
 ```
 
-At this point we have `r length(features_of_interest)` genes we are interested in, and given that we have `r nrow(training_expressions)` observations in our training set, this feature space is still far too large to do analysis on its own. So we now perform a PCA where we look at doing dimension reduction.  When performing a PCA, we take the eigen values of the covariance matrix.  Each eigen value corresponds to the error that would be introduced should we exclude the corresponding eigen vector and lessen the dimension by 1. While we can do the calculation manually by multiplying the data-frame training_expressions_pruned by our eigen vectors to get the resulting eigen values, we elected to use the `prcomp` library.
+At this point we have `r length(features_of_interest)` genes we are interested in, and given that we have `r nrow(training_expressions)` observations in our training set, this feature space is still far too large to do analysis on its own. So we now perform a PCA where we look at doing dimensionality reduction.  When performing a PCA, we take the eigen-values of the covariance matrix.  Each eigen-value corresponds to the error that would be introduced should we exclude the corresponding eigen-vector and lessen the dimension by 1. While we can do the calculation manually by multiplying the data-frame training_expressions_pruned by our eigen vectors to get the resulting eigen-values, we elected to use the `prcomp` library.
 
 
 ```{r, pca_calc}
 pca <- prcomp(training_expressions_pruned)
 ```
 
-To determine how much of a dimension reduction we can do without introducing too much error, we plot the error, which is the square root of the eigen values.
+To determine how much of a dimensionality reduction we can do without introducing too much error, we plot the error, which is the square root of the eigen-values.
 
 ```{r, pca_error_plot}
 plot(sqrt(pca$sdev), type="o", xlab="Eigen Value Index", ylab="Sqrt Error")
 ```
-The first plot shows what we would expect, the eigen-values which are the squre of the error are decreasing, but we effectively need at least 24 of the eigen-vectors to accurately account for the variance in our 25 samples.  This result is not unexpected given our very small sample size ($n = $`r nrow(training_expressions)`).  To me, this indicates that ideally, for a PCA, we would have more samples to better account for all the variance.  So we decide we will make use of all 25 of our eigen-vectors
+The first plot shows what we would expect: the eigen-values which are the square of the error are decreasing, but we effectively need at least 24 of the eigen-vectors to accurately account for the variance in our 25 samples.  This result is not unexpected given our very small sample size ($n = $`r nrow(training_expressions)`).  This indicates that ideally, for a PCA, we would have more samples to better account for all the variance.  So we will make use of all 25 of our eigen-vectors.
 
 ```{r pca_selection}
 expressions_pca <- pca$x
@@ -170,7 +170,7 @@ test_expressions_pca <- cbind(select(test_expressions, cellline),
                               predict(pca, test_expressions_pruned))
 ```
 
-We ended up going down to `r ncol(expressions_pca)` dimensions, and given our sample size, that's far more managable. The next step is to great our training and test data structures that we can test over.  In order to minimize repeating ourselves in our code, we use some tivyverse joining functions, and restructure the data using the gather function.
+We ended up going down to `r ncol(expressions_pca)` dimensions, and given our sample size, that's far more managable. The next step is to create our training and test data structures that we can test over.  In order to minimize repeating ourselves in our code, we use some tivyverse joining functions, and restructure the data using the gather function.
 
 ```{r creating_test_and_train_data}
 training_data <- inner_join(training_set_results,
@@ -234,13 +234,13 @@ write_csv(outcome[,3:4], 'submission_linear_regression.csv')
 
 We make individual models per drug, then run the appropriate model for each drug in the test set.  
 
-Amazingly enough, the linear regression model didn't do too poorly.  At the time of submission, it was not the worst submssion made (though it was the second worst), with a score of 0.51.  The linear regression model did not take into account the subtype of the tumor (due to the limintation of input parameters), and since we were taking samples with replacements, the `lm` was throwing up warnings of having dependent samples, which is why I had to implement the `suppressWarnings` method.
+Amazingly enough, the linear regression model didn't do too poorly.  At the time of submission, it was not the worst submssion made (though it was the second worst), with a score of 0.51.  The linear regression model did not take into account the subtype of the tumor (due to the limintation of input parameters), and since we were taking samples with replacement, the `lm` was throwing up warnings of having dependent samples, which is why we used the `suppressWarnings` option.
 
 In short, linear regression is not a great modeling tool when you have a highly dimensional feature space but very few samples (n << p).
 
 # Random Forests
 
-The next model type we used was random forests.  Random forests lends itself really nicely to this data set, as it has no problem handling high-dimensional with very small sample sizes.  Even though we reduced the expression set data down to 38 dimensions through the PCA, that's still more than the number of training samples we have to work with.  
+The next model type we used was random forests.  Random forests lends itself really nicely to this data set, as it has no problem handling high-dimensional data with very small sample sizes.  Even though we reduced the expression set data down to 38 dimensions through the PCA, that's still more than the number of training samples we have to work with.  
 
 ```{r random_forest, cache=TRUE}
 ntrees = 200000
@@ -274,7 +274,7 @@ write_csv(outcome[,3:4], 'submission_random_forests.csv')
 
  We used a similar modeling structure here as with linear regression, making a separate forest for each drug.  
 
-We settled on the number of trees by trying several different values; tree counts well below `r ntrees` give worse results, while tree counts above it take longer to compute for no gain in performance.  Most of the other defaults for random forest were in line with best practices, such as defaults for node size and number of candidates per split.  We tested a version where the factor variables were identified as such in the R code, but found it actually yielded worse performance, perhaps due to random forests' tendency to over-weight factor variables with more factors. We also tested conditional random forests but excluded them from the final analysis for performing significantly worse.  
+We settled on the number of trees by trying several different values; tree counts well below 200000 give worse results, while tree counts above it take longer to compute for no gain in performance.  Most of the other defaults for random forest were in line with best practices, such as defaults for node size and number of candidates per split.  We tested a version where the factor variables were identified as such in the R code, but found it actually yielded worse performance, perhaps due to random forests' tendency to over-weight factor variables with more factors. We also tested conditional random forests but excluded them from the final analysis for performing significantly worse.  
 
 The random forests model generates significantly better results than the linear regression model, giving us a score of 0.64.  Given the simplicity of the algorithm, for a safe and fast analysis, random forests seem to be an excellent way to go.
 

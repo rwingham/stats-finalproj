@@ -1,13 +1,19 @@
 ---
-title: "Data Import and Rudamentary Analysis"
-output: html_notebook
+title: "Statistical Challenge Writeup"
+output:
+  pdf_document: default
+  html_notebook: default
 ---
 
-```{r, setup}
+
+# Data Import
+
+```{r, setup, echo=FALSE, message=FALSE}
 library(tidyverse)
 library(foreach) # for bagging
 library(randomForest)
 ```
+
 
 ```{r, import}
 subtypes <- read_tsv('subtypes.txt', 
@@ -177,9 +183,9 @@ Now that we have the test and training data in place, as well as our feature red
 
 Since we need to make two submissions, the first submission will make use of linear regression.  Given that we have as many parameters as we have samples, we do not expect linear regression to perform well, but are treating this as an opportunity to learn to implement bagging from the ground-up.
 
-First we create our bagging function, which given n observations will make n samples with replacement as many times as we want (defaulting to 500 times), calculate the prediction parameters, and then average them out.
+First we create our bagging function, which given n observations will make n samples with replacement as many times as we want (defaulting to 500 iterations), calculate the prediction parameters, and then average them out.
 
-```{r, linear_regression_and_bagging}
+```{r, linear_regression_and_bagging, cache=TRUE}
 bagging <- function(training, test_vector, drug, iterations=500)
 {
   training_data_slim <- subset(filter(training, 
@@ -217,13 +223,13 @@ We make individual models per drug, then run the appropriate model for each drug
 
 Amazingly enough, the linear regression model didn't do too poorly.  At the time of submission, it was not the worst submssion made (though it was the second worst), with a score of 0.51.  The linear regression model did not take into account the subtype of the tumor (due to the limintation of input parameters), and since we were taking samples with replacements, the `lm` was throwing up warnings of having dependent samples, which is why I had to implement the `suppressWarnings` method.
 
-In short, linear regression is not a great modeling tool when you have a highly dimensional feature space but very few samples ($ n \lt\lt p$).
+In short, linear regression is not a great modeling tool when you have a highly dimensional feature space but very few samples (n << p).
 
 # Random Forests
 
 The next model type we used was random forests.  Random forests lends itself really nicely to this data set, as it has no problem handling high-dimensional with very small sample sizes.  Even though we reduced the expression set data down to 38 dimensions through the PCA, that's still more than the number of training samples we have to work with.  
 
-```{r random_forest}
+```{r random_forest, cache=TRUE}
 ntrees = 200000
 models <- training_data %>%
             select(-cellline) %>%
@@ -255,8 +261,7 @@ write_csv(outcome[,3:4], 'submission_random_forests.csv')
 
  We used a similar modeling structure here as with linear regression, making a separate forest for each drug.  
 
-
-We settled on the number of trees by trying several different values; tree counts well below `r ntrees` give worse results, while tree counts above it take longer to compute for no gain in performance.  Most of the other defaults for random forest were in line with best practices, such as defaults for node size and number of candidates per split.  We tested a version where the factor variables were identified as such in the R code, but found it actually yielded worse performance, perhaps due to random forests' tendency to over-weight factor variables with more factors. We also tested conditional random forests but excluded them from the final analysis for performing significantly worse.  
+We settled on the number of trees by trying several different values; tree counts well below `r print(ntrees)` give worse results, while tree counts above it take longer to compute for no gain in performance.  Most of the other defaults for random forest were in line with best practices, such as defaults for node size and number of candidates per split.  We tested a version where the factor variables were identified as such in the R code, but found it actually yielded worse performance, perhaps due to random forests' tendency to over-weight factor variables with more factors. We also tested conditional random forests but excluded them from the final analysis for performing significantly worse.  
 
 The random forests model generates significantly better results than the linear regression model, giving us a score of 0.64.  Given the simplicity of the algorithm, for a safe and fast analysis, random forests seem to be an excellent way to go.
 

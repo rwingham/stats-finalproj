@@ -2,3 +2,8 @@
 .RData
 .Rhistory
 notebook.nb.html
+notebook_cache/
+notebook_files/
+submission_linear_regression.csv
+submission_log_regression.csv
+submission_random_forests.csv

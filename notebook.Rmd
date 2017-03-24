@@ -9,7 +9,6 @@ library(foreach) # for bagging
 library(randomForest)
 ```
 
-Add a new chunk by clicking the *Insert Chunk* button on the toolbar or by pressing *Ctrl+Alt+I*.
 ```{r, import}
 subtypes <- read_tsv('subtypes.txt', 
                      col_names=TRUE,
@@ -111,6 +110,8 @@ Since we expect an exponential decay of variances, we look at the log-scale of t
 
 ```{r, variances}
 variances <- apply(expression[,-1], 2, var)
+
+# Here we first split the test and train expression data
 training_expressions <- semi_join(expression, training_set_results, by="cellline")
 test_expressions <- anti_join(expression, training_set_results, by="cellline")
 
@@ -121,8 +122,7 @@ plot(histogram.data, ylim=c(0, 5), ylab=expression("log"[10]*" Frequency"))
 
 ```
 
-While we can see that there is a change in the histogram showing the variance as we approach variance values of 5, we will cloose a much lower threshold due to the remainder of our analysis plan.  The first step of our plan involves determining the eigen values and eigen vectors from the co-variance matrix in order to do a PCA.  Numerical solvers are fairly good, however, calculating the covariance between every gene involves making $n^2$ co-variance calculations.  Since we're starting with `r length(expression)` genes, that would result in  `r length(expression)`$^2$ variance calculations (where each feature has 39 features to it), so we need to slim it down somewhat.
-
+While we can see that there is a change in the histogram showing the variance as we approach variance values of 5, we will cloose a much lower threshold due to our method of dimension reduction.  The first step is determining the eigen values and eigen vectors from the co-variance matrix.  Numerical solvers are fairly good, however, calculating the covariance between every gene involves making $n^2$ co-variance calculations.  Since we're starting with `r length(expression)` genes, that would result in  `r length(expression)`$^2$ variance calculations (where each feature has 25 values from the training data), so we need to slim it down somewhat.
 
 ```{r, minor_reduction}
 cutoff = 2
@@ -132,59 +132,50 @@ training_expressions_pruned <- training_expressions[,features_of_interest]
 test_expressions_pruned <- test_expressions[,features_of_interest]
 ```
 
-At this point we have `r length(features_of_interest)` features, and given that we have `r ncol(expression)` observations, this feature space is still far too large to do analysis on its own, so we now perform a PCA where we look at doing dimension reduction.  When performing a PCA, we take the eigen values of the covariance matrix.  Each eigen value corresponds to the error that would be introduced should we exclude the corresponding eigen vector and lessen the dimension by 1. 
+At this point we have `r length(features_of_interest)` genes we are interested in, and given that we have `r nrow(training_expressions)` observations in our training set, this feature space is still far too large to do analysis on its own. So we now perform a PCA where we look at doing dimension reduction.  When performing a PCA, we take the eigen values of the covariance matrix.  Each eigen value corresponds to the error that would be introduced should we exclude the corresponding eigen vector and lessen the dimension by 1. While we can do the calculation manually by multiplying the data-frame training_expressions_pruned by our eigen vectors to get the resulting eigen values, we elected to use the `prcomp` library.
 
 
 ```{r, pca_calc}
 pca <- prcomp(training_expressions_pruned)
 ```
 
-To determine how much of a dimension reduction we can do without introducing too much error, we plot the eigen-values.
+To determine how much of a dimension reduction we can do without introducing too much error, we plot the error, which is the square root of the eigen values.
 
 ```{r, pca_error_plot}
-par(mfrow=c(1,2))
-error.data<- plot(sqrt(pca$sdev), 
-                  type="l",
-                  xlab="Eigen Value Index",
-                  ylab="Sqrt Error")
-plot(log10(sqrt(pca$sdev)), 
-     type="l",
-     xlab="Eigen Value Index",
-     ylab=expression("log"[10]*" Sqrt Error"))
+plot(sqrt(pca$sdev), type="l", xlab="Eigen Value Index", ylab="Sqrt Error")
 ```
-Again, the first plot does not tell us much, other than the error quickly goes to near 0, suggesting that we can likely do some major feature reduction; however the log-scale plot also shows that there is a rapid transition from a high degree of error, (on the order of $10^0$), to a very small error ($10^{-15}$).  
+The first plot shows what we would expect, the eigen-values which are the squre of the error are decreasing, but we effectively need at least 24 of the eigen-vectors to accurately account for the variance in our 25 samples.  This result is not unexpected given our very small sample size ($n = $`r nrow(training_expressions)`).  To me, this indicates that ideally, for a PCA, we would have more samples to better account for all the variance.  So we decide we will make use of all 25 of our eigen-vectors
 
 ```{r pca_selection}
 expressions_pca <- pca$x
 test_expressions_pca <- cbind(select(test_expressions, cellline), predict(pca, test_expressions_pruned))
 ```
 
-
-We ended up going down to `r ncol(expressions_pca)` dimensions, and given our sample size, that's far more managable.  At this point, I am now ready to begin my bagging/bootstrapping.
+We ended up going down to `r ncol(expressions_pca)` dimensions, and given our sample size, that's far more managable. The next step is to great our training and test data structures that we can test over.  In order to minimize repeating ourselves in our code, we use some tivyverse joining functions, and restructure the data using the gather function.
 
 ```{r creating_test_and_train_data}
 training_data <- inner_join(training_set_results,
-                            bind_cols(as_tibble(expressions_pca), semi_join(subtypes, 
-                                                                 training_expressions, 
-                                                                 by="cellline")),
+                            bind_cols(as_tibble(expressions_pca), 
+                                      semi_join(subtypes, 
+                                                training_expressions, 
+                                                by="cellline")),
                             by = "cellline")
-
 training_data <- gather(training_data, "drug", "response", 2:13)
 training_data$response <- as.factor(training_data$response)
 
-
-
-test_data <- inner_join(tibble('cellline' = setdiff(expression$cellline, training_set_results$cellline)),
-                        inner_join(test_expressions_pca, subtypes, by = "cellline"),
+test_data <- inner_join(tibble('cellline' = setdiff(expression$cellline, 
+                                                    training_set_results$cellline)),
+                        inner_join(test_expressions_pca, 
+                                   subtypes, 
+                                   by = "cellline"),
                         by = "cellline")
 ```
-
 
 Now that we have the test and training data in place, as well as our feature reduction, we can move onto our modeling methods.
 
 # Linear Regression
 
-Since we need to make two submissions, the first submission will make use of linear regression.  To make linear regression work with our obscenely small sample size, we need to trim down the feature space significantly. Even though we got down to `r ncol(expressions_pca)` features, since we only have `r nrow(training_data)` samples, we won't be able to make use of all those features.  As a result, I fully expect the linear regression model to behave poorly, but we are treating this submission as an exercise in developing the method from first principles.
+Since we need to make two submissions, the first submission will make use of linear regression.  Given that we have as many parameters as we have samples, we do not expect linear regression to perform well, but are treating this as an opportunity to learn to implement bagging from the ground-up.
 
 First we create our bagging function, which given n observations will make n samples with replacement as many times as we want (defaulting to 500 times), calculate the prediction parameters, and then average them out.
 
@@ -224,7 +215,9 @@ write_csv(outcome[,3:4], 'submission_linear_regression.csv')
 
 We make individual models per drug, then run the appropriate model for each drug in the test set.  
 
-Amazingly enough, the linear regression model didn't do poorly.  At the time of submission, it was not the worst submssion made (though it was the second worst), with a score of 0.51.  Some notes: due to the extreme amount of error we were introducing by eliminating parameters from the eigen vectors due to our small sample size, we decided to exclude the use of the subtype variable.  It is also possible that accuracy will improve if we were to increase the iterations, but at 500 iterations of 25 choose 25 with replacement, it's most likely we are converging.
+Amazingly enough, the linear regression model didn't do too poorly.  At the time of submission, it was not the worst submssion made (though it was the second worst), with a score of 0.51.  The linear regression model did not take into account the subtype of the tumor (due to the limintation of input parameters), and since we were taking samples with replacements, the `lm` was throwing up warnings of having dependent samples, which is why I had to implement the `suppressWarnings` method.
+
+In short, linear regression is not a great modeling tool when you have a highly dimensional feature space but very few samples ($ n \lt\lt p$).
 
 # Random Forests
 

@@ -110,11 +110,12 @@ The next step in our analysis is to slim down our feature space.  We are working
 Since we expect an exponential decay of variances, we look at the log-scale of the variances to see if there is an obvious cut-off.
 
 ```{r, variances}
+variances <- apply(expression[,-1], 2, var)
 training_expressions <- semi_join(expression, training_set_results, by="cellline")
-test_expressins <- anti_join(expression, training_set_results, by="cellline")
+test_expressions <- anti_join(expression, training_set_results, by="cellline")
 
 par(mfrow=c(1,2))
-histogram.data <- hist(apply(training_expressions[,-1], 2, var), breaks=30, plot=TRUE)
+histogram.data <- hist(variances, breaks=30, plot=TRUE)
 histogram.data$counts <- log(histogram.data$counts, 10)
 plot(histogram.data, ylim=c(0, 5), ylab=expression("log"[10]*" Frequency"))
 
@@ -125,6 +126,7 @@ While we can see that there is a change in the histogram showing the variance as
 
 ```{r, minor_reduction}
 cutoff = 2
+
 features_of_interest <- colnames(training_expressions[,-1])[which(variances > cutoff)]
 training_expressions_pruned <- training_expressions[,features_of_interest]
 test_expressions_pruned <- test_expressions[,features_of_interest]
@@ -229,6 +231,7 @@ Amazingly enough, the linear regression model didn't do poorly.  At the time of 
 The next model type we used was random forests.  Random forests lends itself really nicely to this data set, as it has no problem handling high-dimensional with very small sample sizes.  Even though we reduced the expression set data down to 38 dimensions through the PCA, that's still more than the number of training samples we have to work with.  
 
 ```{r random_forest}
+ntrees = 200000
 models <- training_data %>%
             select(-cellline) %>%
             group_by(drug) %>%
@@ -236,7 +239,7 @@ models <- training_data %>%
             mutate(model = map(data, ~ randomForest(response ~ ., 
                                                     data=., 
                                                     importance=TRUE, 
-                                                    ntree=200000)))
+                                                    ntree=ntrees)))
 
 
 outcome <- tibble('cellline' = scoring$cellline,
@@ -260,7 +263,7 @@ write_csv(outcome[,3:4], 'submission_random_forests.csv')
  We used a similar modeling structure here as with linear regression, making a separate forest for each drug.  
 
 
-We settled on the number of trees by trying several different values; tree counts well below `r ntree` give worse results, while tree counts above it take longer to compute for no gain in performance.  Most of the other defaults for random forest were in line with best practices, such as defaults for node size and number of candidates per split.  We tested a version where the factor variables were identified as such in the R code, but found it actually yielded worse performance, perhaps due to random forests' tendency to over-weight factor variables with more factors. We also tested conditional random forests but excluded them from the final analysis for performing significantly worse.  
+We settled on the number of trees by trying several different values; tree counts well below `r ntrees` give worse results, while tree counts above it take longer to compute for no gain in performance.  Most of the other defaults for random forest were in line with best practices, such as defaults for node size and number of candidates per split.  We tested a version where the factor variables were identified as such in the R code, but found it actually yielded worse performance, perhaps due to random forests' tendency to over-weight factor variables with more factors. We also tested conditional random forests but excluded them from the final analysis for performing significantly worse.  
 
 The random forests model generates significantly better results than the linear regression model, giving us a score of 0.64.  Given the simplicity of the algorithm, for a safe and fast analysis, random forests seem to be an excellent way to go.
 

@@ -6,7 +6,6 @@ output: html_notebook
 ```{r, setup}
 library(tidyverse)
 library(e1071) # for SVMs
-library(ipred) # for bagging
 library(foreach) # also for bagging
 library(randomForest)
 
@@ -20,13 +19,14 @@ subtypes <- read_tsv('subtypes.txt',
                        cellline = col_character(),
                        subtype = col_character())
                      )
+# subtypes_binary <- subset(transform(subtypes, 
+#                                     'normal_like' = as.factor(subtype == "Normal-like"),
+#                                     'luminal' = as.factor(subtype == "Luminal"),
+#                                     'claudin_low' = as.factor(subtype == "Claudin-low"),
+#                                     'basal' = as.factor(subtype == "Basal")),
+#                           select=-c(subtype))
 
-subtypes <- transform(subtypes, 'normal_like' = as.numeric(subtype == "Normal-like"),
-                                'luminal' = as.numeric(subtype == "Luminal"),
-                                'claudin_low' = as.numeric(subtype == "Claudin-low"),
-                                'basal' = as.numeric(subtype == "Basal"))
-subtypes$subtype <- NULL
-
+subtypes$subtype <- as.factor(subtypes$subtype)
 
 scoring <- read_csv('scoring_and_test_set_id_mappings.csv', 
                     col_names = TRUE,
@@ -35,6 +35,7 @@ scoring <- read_csv('scoring_and_test_set_id_mappings.csv',
                       drug = col_character(),
                       id = col_integer(),
                       Usage = col_character()))
+
 # discovered drug naming mismatch, making them the same this way
 scoring$drug <- gsub("-", ".", scoring$drug)
 
@@ -56,7 +57,8 @@ training_set_results <- read.table('training_set_answers.txt',
                                    header=TRUE,
                                    sep = '\t',
                                    row.names=1,
-                                   quote = "")
+                                   quote = "",
+                                   colClasses="factor")
 
 
 expression = as_tibble(rownames_to_column(as.data.frame(t(expression)), var='cellline'))
@@ -64,192 +66,187 @@ training_set_results = as_tibble(rownames_to_column(training_set_results, var='c
 ```
 
 
-First, I want to make sure the expression set is normalized properly.  To do that, I evaluate the quantiles for each cell line, since I'm not actually interested in what the actual values, I'm interested in how much they vary.
+# EDA
 
-```{r, validation}
+First, we look for missing values, as their precense will make a large impact on how we proceed
+
+```{r missing}
+anyNA(expression)
+anyNA(training_set_results)
+anyNA(subtypes)
+anyNA(scoring)
+```
+
+Now that we can see that we have no missing data, we can now evaluate types.  
+
+```{r typeof_subtypes}
+sapply(subtypes, class)
+```
+
+```{r typeof_expression}
+table(sapply(expression, class))
+class(expression$cellline)
+```
+
+```{r type_of_training_set_results}
+table(sapply(training_set_results, class))
+class(training_set_results$cellline)
+```
+
+Now, we are happy that we have no missing data we have to address, and all of the data we imported is stored in the correct type for the purposes of analysis in `R`, we now go on to check for normalization in the gene expression data.  To do that, I evaluate the quantiles for each cell line, since I'm not actually interested in what the actual values, I'm interested in how much they vary.
+
+```{r, normalization_verify_1}
 expression_quantiles <- apply(expression[,-1], 1, quantile, probs=c(.25,.5, .75))
 apply(expression_quantiles, 1, var)
+```
+
+If we're not happy with just checking the quantiles alone, we can look at a row-wise boxplot.
+
+```{r, normalization_verify_2}
+boxplot(t(subset(expression, select=-c(cellline))), 
+        names=expression$cellline,
+        # xlab='Cell-line',
+        las=2)
+title("Comparing Gene Expression Values")
 ```
 
 From the results, I can see the quantiles are all similar, and am satisified that the expression data does not require any further normalization.
 
 
+# Classification
+
+The next step in our analysis is to slim down our feature space.  We are working with `r length(expression)` genes, which is not really feasible to try and make work.  The first thing we do is remove the genes from the analysis that have low variance, or in other words, genes that seem to not change regardless of which sample.  To determine the cutoff, we analyze what the gene variance looks like.
+
+Since we expect an exponential decay of variances, we look at the log-scale of the variances to see if there is an obvious cut-off.
+
 ```{r, variances}
 par(mfrow=c(1,2))
 variances <- apply(expression[,-1], 2, var)
+
+
 histogram.data <- hist(variances, breaks=30, plot=TRUE)
 histogram.data$counts <- log(histogram.data$counts, 10)
 plot(histogram.data, ylim=c(0, 5), ylab=expression("log"[10]*" Frequency"))
 
 ```
 
-Normally, I would make the cut-off significantly higher on variance (than 2), the two major computations to do are a covariance matrix for all vectors/features, and then determining the eigen values.  If we decided to calculate the covariance of all 18632 genes, that would be $18623^2$ variance calculations (where each feature has 39 features to it).  Due to the exponential increase, we want to bring the feature size down somewhat, and having something in the neighborhood of ~1000 is perfectly doable for modern computers. 
+While we can see that there is a change in how the histogram showing what the variance is like when we approach variance values of 5, we will cloose a much lower threshold due to the remainder of our analysis plan, with which the first step involves determining the eigen values and eigen vectors from the co-variance matrix for the purposes of doing a PCA.  Numerical solvers are fairly good, however calculating the covariance between every gene involves making $n^2$ co-variance calculations.  Since we're starting with `r length(expression)` genes, that would result in  `r length(expression)`$^2$ variance calculations (where each feature has 39 features to it), so we need to slim it down somewhat.
 
 
 ```{r, pca_1}
-features_of_interest <- colnames(expression[,-1])[which(variances > 2)]
+cutoff = 2
+features_of_interest <- colnames(expression[,-1])[which(variances > cutoff)]
 expressions_pruned <- expression[,features_of_interest]
 ```
 
-At this point we have `r length(features_of_interest)` features, and given that we have `r dim(expression)[1]` observations, this feature space is still far too large.  So we can perform a PCA by doing some dimension reduction.
+At this point we have `r length(features_of_interest)` features, and given that we have `r ncol(expression)` observations, this feature space is still far too large to do analysis on its own, which is why we now perform a PCA where we look at doing dimension reduction.  When performing a PCA, we take the eigen values the covariance matrix.  Each eigen value corresponds to the error that would be introduced should we exclude the corresponding eigen vector and lessen the dimension by 1. 
 
 
-# Note - Add Plot of Eigen Values (errors)
-
-```{r, pca_2}
+```{r, eigen_calcs}
 ev <- eigen(cov(expressions_pruned))
-expressions_pca <- as.data.frame(as.matrix(expressions_pruned) %*% ev$vectors[,1:length(ev$values[which(ev$values > .1)])])
-
-# or alternatively
-# pca <- prcomp(expressions_pruned, scale=TRUE)
 ```
 
-We ended up going down to `r length(ev$values[which(ev$values > .1)])` dimensions, and given our sample size that's far more managable.  At this point, I am now ready to begin my bagging/bootstrapping.
+To determine how much of a dimension reduction we can do without introducing too much error, we plot the eigen-values.
+
+```{r, pca_error_plot}
+par(mfrow=c(1,2))
+error.data<- plot(ev$values, 
+                  type="l",
+                  xlab="Eigen Value Index",
+                  ylab="Error")
+plot(log10(ev$values), 
+     type="l",
+     xlab="Eigen Value Index",
+     ylab=expression("log"[10]*" Error"))
+```
+Again, the first plot does not tell us much, other than the error quickly goes to near 0, suggesting that we can likely do some major feature reduction; however the log-scale plot also shows that there is a rapid transition from a high degree of error, (on the order of $10^0$) to a very small error ($10^{-15}$).  
+
+```{r pca_selection}
+expressions_pca <- as.data.frame(as.matrix(expressions_pruned) %*% 
+                                   ev$vectors[,1:length(ev$values[which(ev$values > .1)])])
+```
+
+
+We ended up going down to `r ncol(expressions_pca)` dimensions, and given our sample size that's far more managable.  At this point, I am now ready to begin my bagging/bootstrapping.
 
 ```{r combining_training_data}
-#rosemary messing around
-# library(broom)
 training_data <- inner_join(training_set_results,
-                            bind_cols(subtypes, expressions_pca),
+                            bind_cols(expressions_pca, subtypes),
                             by = "cellline")
 
 training_data <- gather(training_data, "drug", "response", 2:13)
+training_data$response <- as.factor(training_data$response)
 
-```
-
-
-```{r}
 test_data <- inner_join(tibble('cellline' = setdiff(expression$cellline, 
                                 training_set_results$cellline)),     
-                        bind_cols(subtypes, expressions_pca), 
+                        bind_cols(expressions_pca, subtypes), 
                         by = 'cellline')
 ```
 
 
+Now that we have the test and training data in place, as well as our feature reduction, we can move onto our modeling methods.
 
-Now that we have training data in place, we need to develop a different model for every different drug, which we can do using a group-by operation.
+# Linear Regression
 
+Since we need to make two submissions, the first submission will make use of linear regression, to make linear regression work with our obscenely small sample size, we need to trim down the feature space significantly. Even though we got down to `r ncol(expressions_pca)` features, since we only have `r nrow(training_data)` samples, we won't be able to make use of all those features.  As a result, I fully expect the linear regression model to behave poorly, but we are treating this submission as an exercise in developing the method from first principles.
 
-```{r, group_by_lm}
-# models <- training_data %>% 
-#             select(-cellline) %>% 
-#             group_by(drug) %>% 
-#             nest() %>% 
-#             mutate(model = map(data, ~ lm(response ~ ., data = .)))
-```
+First we create our bagging function, which given n observations, it will make n samples with replacements as many times as we want (specified a default of 500 times), calculate the prediction parameters and then average them out.
 
-So now we have the predictor factors and a column for drug and response each, for easier feeding into prediction models for supervised learning.  So we can use everything to predict "response"
-
-
-```{r, svm}
-# support <- svm(response ~., training_data)
-# summary(support)
-# support.preditself <- predict(support,training_data)
-# table(pred = support.preditself, true = training_data[1:156,]$response)
-```
-These aren't models I expected to represent the data well, just making sure the data can run.
-
-The linear model isn't even using most of our factors, and is pretty bad.  Forcing it to use the factors made it use about 9 of the eigenvectors.  Not that we expected it to work particularly well.
-
-The SVM is also not working very well.  I chopped off at 158 because the prediction was mysteriously only 158 chars long, so this is probably wrong somewhere.  It'd be better to be predicting the test data instead of predicting itself in any case, so we should recheck this when we have the test data in.
-
-But, they technically work!
-
-
-
-## Dumb Linear Regression (2nd Submission)
-
-Since we need to make two submissions, the second submission will make use of linear regression, to make linear regression work with our obscenely small sample size, we need to trim down the feature space significantly.  From doing a PCA, we will need to trim down to the point that we will be reintroducing good amount of error
-
-
-```{r dumb_linear_regression}
-# expressions_pca <- as.data.frame(as.matrix(expressions_pruned) %*% ev$vectors[,1:length(ev$values[1:24])])
-# 
-# training_data <- inner_join(training_set_results,
-#                             bind_cols(subtypes[1], expressions_pca),
-#                             by = "cellline")
-# training_data <- gather(training_data, "drug", "response", 2:13)
-# 
-# predictions <- training_data %>%
-#               select(-cellline) %>%
-#               group_by(drug) %>%
-#               nest() %>%
-#               mutate(model = map(data, ~ lm(response ~ ., data = .)))
-
-```
-
-
-
-
-```{r dumb_bagging}
+```{r, linear_regression and bagging}
 bagging <- function(training, test_vector, drug, iterations=500)
 {
-  training_data_slim <- filter(training, drug == drug)
-  training_data_slim <- subset(training_data_slim, select=-c(drug))
+  training_data_slim <- subset(filter(training, 
+                                      drug == drug), 
+                               select=-c(drug, cellline))
   predictions <- foreach(m=1:iterations, .combine=cbind)  %do% {
-    training_bag_set <- sample_n(subset(training_data_slim, 
-                                        select=-c(cellline)), 
+    training_bag_set <- sample_n(training_data_slim, 
                                  size=nrow(training_data_slim), 
                                  replace=TRUE)
-    suppressWarnings(fit <- lm(response ~ ., data=training_bag_set))
+    suppressWarnings(fit <- lm(as.numeric(levels(response))[response] ~ ., 
+                               data=training_bag_set))
     suppressWarnings(predict(fit, newdata=test_data))
   }
   rowMeans(predictions)
 }
 
-```
-
-
-```{r predict_1}
 outcome <- tibble('cellline' = scoring$cellline,
-                   'drug' = scoring$drug,
-                   'id' = scoring$id,
-                   'value' = NA)
+                  'drug' = scoring$drug,
+                  'id' = scoring$id,
+                  'value' = NA)
 
 for(drug in unique(training_data$drug)){
   predictions <- bagging(training_data, test_data, drug)
   for(j in seq_along(test_data$cellline)){
     cellline <- test_data$cellline[j]
     row <- which(outcome$cellline == cellline & outcome$drug == drug)
-    outcome$value[row] <- ifelse(predictions[j] < 0.5, 0, 1)
+    outcome$value[row] <- predictions[j]
   }
 }
 
 write_csv(outcome[,3:4], 'submission_linear_regression.csv')
 ```
 
+Amazingly enough, the linear regression model didn't do poorly.  At the time of submission, it was not the worst submssion made (but second worst), and resulted in a score of 0.51.  Some notes, due to the extreme amount of error I was introducing by eliminating parameters from the eigen vectors due to my small sample size, we decided to exclude the use of the subtype variable.  It is also possible that accuracy will improve if I was to inrease the iterations, but at 500 iterations of 25 choose 25 with replacement, it's most likely we are converging.
+
+# Random Forests
+
+The next model type we elected to use was random forests.  Random forests lends itself really nicely to us, as it has no problem handling highly dimension data with very small sample sizes.  Even though through the PCA, we reduced the expression set data down to 38 dimensions, that's still more than the number of training samples we have to work with.  
 
 ```{r random_forest}
-
-#a copy with response as a factor for classification algorithms
-training_data_class <- training_data
-training_data_class$response <- as.factor(training_data_class$response)
-training_data_class$drug <- as.factor(training_data_class$drug)
-training_data_class$cellline <- as.factor(training_data_class$cellline)
-
-#doesn't work with the test data because of column # diffs :(
-#forest <- randomForest(response ~ .,training_data_class, xtest=test_data)
-#forest_predictions <- data.frame(forest$predicted)
-#forest_predictions <- bind_cols(data.frame(c(1:300)),forest_predictions)
-#write_csv(forest_predictions, 'submission_forest.csv')
-```
-
-
-```{r random_forest_2}
 models <- training_data %>%
             select(-cellline) %>%
             group_by(drug) %>%
             nest() %>%
-            mutate(model = map(data, ~ randomForest(as.factor(response) ~ ., 
+            mutate(model = map(data, ~ randomForest(response ~ ., 
                                                     data=., 
                                                     importance=TRUE, 
                                                     ntree=200000)))
 
 
 outcome <- tibble('cellline' = scoring$cellline,
-                   'drug' = scoring$drug,
-                   'id' = scoring$id,
-                   'value' = NA)
+                  'drug' = scoring$drug,
+                  'id' = scoring$id,
+                  'value' = NA)
 
 for(i in seq_along(models$drug)){
   drug <- models$drug[i]
@@ -263,5 +260,6 @@ for(i in seq_along(models$drug)){
 
 write_csv(outcome[,3:4], 'submission_random_forests.csv')
 ```
-We keep the factor variables coded as numberic here because random forests favor factor variables with more levels, and including them as factors was actually yielding worse performance.  We assume the factors were overshadowing more useful information from the results of our PCA.
+
+The random forests model generates significantly better results than the linear regression model, giving us a score of 0.64.  Given the simplicity of the algorithm, for a safe and fast analysis, random forests seem to be an excellent way to go.
 

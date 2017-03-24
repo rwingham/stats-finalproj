@@ -5,10 +5,8 @@ output: html_notebook
 
 ```{r, setup}
 library(tidyverse)
-library(e1071) # for SVMs
-library(foreach) # also for bagging
+library(foreach) # for bagging
 library(randomForest)
-
 ```
 
 Add a new chunk by clicking the *Insert Chunk* button on the toolbar or by pressing *Ctrl+Alt+I*.
@@ -19,13 +17,6 @@ subtypes <- read_tsv('subtypes.txt',
                        cellline = col_character(),
                        subtype = col_character())
                      )
-# subtypes_binary <- subset(transform(subtypes, 
-#                                     'normal_like' = as.factor(subtype == "Normal-like"),
-#                                     'luminal' = as.factor(subtype == "Luminal"),
-#                                     'claudin_low' = as.factor(subtype == "Claudin-low"),
-#                                     'basal' = as.factor(subtype == "Basal")),
-#                           select=-c(subtype))
-
 subtypes$subtype <- as.factor(subtypes$subtype)
 
 scoring <- read_csv('scoring_and_test_set_id_mappings.csv', 
@@ -105,7 +96,6 @@ If we're not happy with just checking the quantiles alone, we can look at a row-
 ```{r, normalization_verify_2}
 boxplot(t(subset(expression, select=-c(cellline))), 
         names=expression$cellline,
-        # xlab='Cell-line',
         las=2)
 title("Comparing Gene Expression Values")
 ```
@@ -120,11 +110,11 @@ The next step in our analysis is to slim down our feature space.  We are working
 Since we expect an exponential decay of variances, we look at the log-scale of the variances to see if there is an obvious cut-off.
 
 ```{r, variances}
+training_expressions <- semi_join(expression, training_set_results, by="cellline")
+test_expressins <- anti_join(expression, training_set_results, by="cellline")
+
 par(mfrow=c(1,2))
-variances <- apply(expression[,-1], 2, var)
-
-
-histogram.data <- hist(variances, breaks=30, plot=TRUE)
+histogram.data <- hist(apply(training_expressions[,-1], 2, var), breaks=30, plot=TRUE)
 histogram.data$counts <- log(histogram.data$counts, 10)
 plot(histogram.data, ylim=c(0, 5), ylab=expression("log"[10]*" Frequency"))
 
@@ -133,54 +123,58 @@ plot(histogram.data, ylim=c(0, 5), ylab=expression("log"[10]*" Frequency"))
 While we can see that there is a change in how the histogram showing what the variance is like when we approach variance values of 5, we will cloose a much lower threshold due to the remainder of our analysis plan, with which the first step involves determining the eigen values and eigen vectors from the co-variance matrix for the purposes of doing a PCA.  Numerical solvers are fairly good, however calculating the covariance between every gene involves making $n^2$ co-variance calculations.  Since we're starting with `r length(expression)` genes, that would result in  `r length(expression)`$^2$ variance calculations (where each feature has 39 features to it), so we need to slim it down somewhat.
 
 
-```{r, pca_1}
+```{r, minor_reduction}
 cutoff = 2
-features_of_interest <- colnames(expression[,-1])[which(variances > cutoff)]
-expressions_pruned <- expression[,features_of_interest]
+features_of_interest <- colnames(training_expressions[,-1])[which(variances > cutoff)]
+training_expressions_pruned <- training_expressions[,features_of_interest]
+test_expressions_pruned <- test_expressions[,features_of_interest]
 ```
 
 At this point we have `r length(features_of_interest)` features, and given that we have `r ncol(expression)` observations, this feature space is still far too large to do analysis on its own, which is why we now perform a PCA where we look at doing dimension reduction.  When performing a PCA, we take the eigen values the covariance matrix.  Each eigen value corresponds to the error that would be introduced should we exclude the corresponding eigen vector and lessen the dimension by 1. 
 
 
-```{r, eigen_calcs}
-ev <- eigen(cov(expressions_pruned))
+```{r, pca_calc}
+pca <- prcomp(training_expressions_pruned)
 ```
 
 To determine how much of a dimension reduction we can do without introducing too much error, we plot the eigen-values.
 
 ```{r, pca_error_plot}
 par(mfrow=c(1,2))
-error.data<- plot(ev$values, 
+error.data<- plot(sqrt(pca$sdev), 
                   type="l",
                   xlab="Eigen Value Index",
-                  ylab="Error")
-plot(log10(ev$values), 
+                  ylab="Sqrt Error")
+plot(log10(sqrt(pca$sdev)), 
      type="l",
      xlab="Eigen Value Index",
-     ylab=expression("log"[10]*" Error"))
+     ylab=expression("log"[10]*" Sqrt Error"))
 ```
 Again, the first plot does not tell us much, other than the error quickly goes to near 0, suggesting that we can likely do some major feature reduction; however the log-scale plot also shows that there is a rapid transition from a high degree of error, (on the order of $10^0$) to a very small error ($10^{-15}$).  
 
 ```{r pca_selection}
-expressions_pca <- as.data.frame(as.matrix(expressions_pruned) %*% 
-                                   ev$vectors[,1:length(ev$values[which(ev$values > .1)])])
+expressions_pca <- pca$x
+test_expressions_pca <- cbind(select(test_expressions, cellline), predict(pca, test_expressions_pruned))
 ```
 
 
 We ended up going down to `r ncol(expressions_pca)` dimensions, and given our sample size that's far more managable.  At this point, I am now ready to begin my bagging/bootstrapping.
 
-```{r combining_training_data}
+```{r creating_test_and_train_data}
 training_data <- inner_join(training_set_results,
-                            bind_cols(expressions_pca, subtypes),
+                            bind_cols(as_tibble(expressions_pca), semi_join(subtypes, 
+                                                                 training_expressions, 
+                                                                 by="cellline")),
                             by = "cellline")
 
 training_data <- gather(training_data, "drug", "response", 2:13)
 training_data$response <- as.factor(training_data$response)
 
-test_data <- inner_join(tibble('cellline' = setdiff(expression$cellline, 
-                                training_set_results$cellline)),     
-                        bind_cols(expressions_pca, subtypes), 
-                        by = 'cellline')
+
+
+test_data <- inner_join(tibble('cellline' = setdiff(expression$cellline, training_set_results$cellline)),
+                        inner_join(test_expressions_pca, subtypes, by = "cellline"),
+                        by = "cellline")
 ```
 
 
@@ -192,7 +186,7 @@ Since we need to make two submissions, the first submission will make use of lin
 
 First we create our bagging function, which given n observations, it will make n samples with replacements as many times as we want (specified a default of 500 times), calculate the prediction parameters and then average them out.
 
-```{r, linear_regression and bagging}
+```{r, linear_regression_and_bagging}
 bagging <- function(training, test_vector, drug, iterations=500)
 {
   training_data_slim <- subset(filter(training, 
